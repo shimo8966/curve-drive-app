@@ -102,12 +102,13 @@ class JwCheck {
  static bool SaveJww(string folder){
   IntPtr fileMenu=GetSubMenu(GetMenu(main),0);for(int m=0;m<GetMenuItemCount(fileMenu);m++){var label=new StringBuilder(256);GetMenuString(fileMenu,(uint)m,label,256,0x400);Write("FILE MENU id="+GetMenuItemID(fileMenu,m)+" text="+label);}
   string file=Path.Combine(folder,"Work.jww");IntPtr oldList=FindList();if(oldList!=IntPtr.Zero){PostMessage(GetAncestor(oldList,2),0x111,new IntPtr(2),IntPtr.Zero);Thread.Sleep(300);}ShowWindow(main,9);SetForegroundWindow(main);Thread.Sleep(250);PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(1500);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
-  EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&Kind(h)=="#32770")dialog=h;return true;},IntPtr.Zero);
+  EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&Kind(h)=="#32770"){dialog=h;Write("SAVE DIALOG handle="+h+" title="+Title(h));}return true;},IntPtr.Zero);
   if(dialog==IntPtr.Zero){Write("SAVE no dialog");return false;}
   EnumChildWindows(dialog,delegate(IntPtr h,IntPtr unused){if(!IsWindowVisible(h))return true;var text=new StringBuilder(2048);SendMessage(h,13,new IntPtr(text.Capacity),text);Write("SAVE CONTROL id="+GetDlgCtrlID(h)+" class="+Kind(h)+" text="+text.ToString());if(Kind(h)=="Edit"&&(GetDlgCtrlID(h)==1152||text.ToString().IndexOf("Fixture",StringComparison.OrdinalIgnoreCase)>=0))edit=h;return true;},IntPtr.Zero);
   if(edit==IntPtr.Zero){
    IntPtr create=GetDlgItem(dialog,2408);
    if(create!=IntPtr.Zero&&IsWindowVisible(create)){
+    IntPtr directory=GetDlgItem(dialog,1487);if(directory!=IntPtr.Zero){SetWindowText(directory,folder);PostMessage(directory,0x100,new IntPtr(13),IntPtr.Zero);PostMessage(directory,0x101,new IntPtr(13),IntPtr.Zero);Thread.Sleep(350);Write("SAVE directory="+Title(directory));}
     PostMessage(create,0xF5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(450);Screenshot("save-new-name");
     EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner!=(uint)pid||!IsWindowVisible(h)||Kind(h)!="#32770")return true;
      EnumChildWindows(h,delegate(IntPtr c,IntPtr nothing){if(IsWindowVisible(c)){var text=new StringBuilder(1024);SendMessage(c,13,new IntPtr(text.Capacity),text);Write("NEW CONTROL id="+GetDlgCtrlID(c)+" class="+Kind(c)+" text="+text);if(Kind(c)=="Edit"&&GetDlgCtrlID(c)==1491){edit=c;dialog=h;}}return true;},IntPtr.Zero);return true;
@@ -115,7 +116,9 @@ class JwCheck {
    }
   }
   if(edit==IntPtr.Zero){Write("SAVE no filename edit");return false;}
-  SetWindowText(edit,file);PostMessage(dialog,0x111,new IntPtr(1),IntPtr.Zero);bool saved=WaitFile(file);Write("SAVE result="+saved+" title="+Title(main));Screenshot("saved");return saved;
+  Write("SAVE filenameField="+edit+" dialog="+dialog+" controlId="+GetDlgCtrlID(edit));bool named=SetWindowText(edit,Path.GetFileNameWithoutExtension(file));Write("SAVE SetWindowText="+named+" readback="+Title(edit));PostMessage(dialog,0x111,new IntPtr(1),IntPtr.Zero);bool saved=WaitFile(file);Write("SAVE result="+saved+" title="+Title(main));
+  foreach(string created in Directory.GetFiles(folder,"*.jww",SearchOption.AllDirectories))if(File.GetLastWriteTimeUtc(created)>DateTime.UtcNow.AddMinutes(-4))Write("SAVE RECENT "+created);
+  Screenshot("saved");return saved;
  }
  static string Dxf(){return "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1009\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nENTITIES\r\n0\r\nLINE\r\n8\r\nPLAN\r\n62\r\n1\r\n10\r\n0\r\n20\r\n0\r\n11\r\n50000\r\n21\r\n0\r\n0\r\nCIRCLE\r\n8\r\nACTUAL\r\n62\r\n3\r\n10\r\n10000\r\n20\r\n0\r\n40\r\n35\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";}
  [STAThread]static int Main(string[] args){
