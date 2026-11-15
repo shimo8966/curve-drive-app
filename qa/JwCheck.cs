@@ -40,6 +40,7 @@ class JwCheck {
  static IntPtr Open(){IntPtr list=FindList();if(list!=IntPtr.Zero)return list;uint cmd=Menu(GetMenu(main));Write("EXTERNAL command="+cmd);if(cmd==0)throw new Exception("External menu was not found");PostMessage(main,0x111,new IntPtr(cmd),IntPtr.Zero);for(int i=0;i<70;i++){Thread.Sleep(100);list=FindList();if(list!=IntPtr.Zero)return list;}throw new Exception("File list did not open");}
  static bool WaitFile(string file){for(int i=0;i<40;i++){if(File.Exists(file))return true;Thread.Sleep(100);}return false;}
  static readonly JavaScriptSerializer json=new JavaScriptSerializer();
+ const string StraightKey="{\"cadUnits\":\"mm-real-v28-auto\",\"x0\":0,\"y0\":0,\"heading\":0,\"z0\":0,\"grade\":0,\"segs\":[{\"type\":\"S\",\"l\":50,\"r\":0}]}";
  static string Num(double value){return value.ToString("R",CultureInfo.InvariantCulture);}
  static void LaunchCad(string input){
   main=IntPtr.Zero;cad=Process.Start(new ProcessStartInfo(cadExe,"\""+input+"\""){WorkingDirectory=Path.GetDirectoryName(cadExe),UseShellExecute=false});pid=cad.Id;
@@ -51,9 +52,11 @@ class JwCheck {
   for(int i=0;i<60;i++){try{Call("health",null);return bridge;}catch(WebException){Thread.Sleep(100);}}throw new Exception("Bridge did not start");
  }
  static void Rerun(){
-  IntPtr button=IntPtr.Zero;int matches=0;
-  EnumChildWindows(main,delegate(IntPtr h,IntPtr unused){if(IsWindowVisible(h)&&Kind(h)=="Button"&&(Title(h).Contains("再実行")||GetDlgCtrlID(h)==1065)){button=h;matches++;Write("RERUN BUTTON id="+GetDlgCtrlID(h)+" title="+Title(h));}return true;},IntPtr.Zero);
-  if(matches!=1)throw new Exception("Exactly one visible Re-run button is required");PostMessage(button,0xF5,IntPtr.Zero,IntPtr.Zero);
+  for(int attempt=0;attempt<60;attempt++){
+   IntPtr button=IntPtr.Zero;int matches=0;
+   EnumChildWindows(main,delegate(IntPtr h,IntPtr unused){if(IsWindowVisible(h)&&Kind(h)=="Button"&&(Title(h).Contains("再実行")||GetDlgCtrlID(h)==1065)){button=h;matches++;}return true;},IntPtr.Zero);
+   if(matches==1){Write("RERUN BUTTON id="+GetDlgCtrlID(button)+" title="+Title(button));PostMessage(button,0xF5,IntPtr.Zero,IntPtr.Zero);return;}Thread.Sleep(80);
+  }throw new Exception("Exactly one visible Re-run button is required");
  }
  static void WaitIssued(string folder,double station){for(int i=0;i<100;i++){State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));if(state.state=="issued"&&state.station==station){Thread.Sleep(350);return;}Thread.Sleep(80);}throw new Exception("Manual Re-run did not issue the expected point");}
  static string Call(string path,object body){
@@ -127,7 +130,7 @@ class JwCheck {
   Process bridge=LaunchBridge(folder);
   try{
    for(int i=0;i<60;i++){try{Call("health",null);break;}catch(WebException){Thread.Sleep(100);}}
-   var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI fixture",planKey="straight-50m",station=10,p=new{x=10,y=0}}));string session=(string)baseline["session"];
+   var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI fixture",planKey=StraightKey,station=10,p=new{x=10,y=0}}));string session=(string)baseline["session"];
    Call("auto/prepare",new{session=session,end=new{x=50,y=0}});CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
    CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
    string text="REM Fixture setup - known picked point from real CAD geometry\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
@@ -137,9 +140,15 @@ class JwCheck {
    Call("auto/enable",new{});
    foreach(double station in new[]{10.5,11}){
     double offset=station==10.5?.02:-.02;State previous=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
-    Call("point",new{site="CI fixture",planKey="straight-50m",session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
-    if(station==11){IntPtr pendingList=Open();ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER");}
-    string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);Thread.Sleep(350);
+    if(station==10.5){
+     using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeCheck.py")+"\" 10.5 20"){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
+      if(!edge.WaitForExit(60000)){edge.Kill();throw new Exception("Edge Enter test timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Edge Enter failed: "+error);
+     }
+    }else{
+     Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
+     IntPtr pendingList=Open();ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER");
+     string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);
+    }Thread.Sleep(350);
     CheckDrawing(ReadDrawing(probe),link,new Pt{x=station,y=offset},station==10.5?2:3);
    }
    bool refused=false;try{Call("auto/apply",new{session=session,station=11});}catch(WebException){refused=true;}
@@ -151,10 +160,10 @@ class JwCheck {
    bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();cad.Kill();cad.WaitForExit(5000);cad.Dispose();
    LaunchCad(drawing);bridge=LaunchBridge(folder);State resumed=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
    if(resumed.session!=session||resumed.station!=11||resumed.state!="issued")throw new Exception("Restart changed the saved measurement session");
-   Call("field/start",new{site="CI fixture",planKey="straight-50m",session=session});
+   Call("field/start",new{site="CI fixture",planKey=StraightKey,session=session});
    Activate("Field_Run.bat",delegate(){CadLink current=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));return current.fieldReady&&current.pid==pid;});
    link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));Write("NATIVE_RESTART_READY pid="+pid+" station="+resumed.station);
-   Call("point",new{site="CI fixture",planKey="straight-50m",session=session,station=11.5,previousStation=11,p=new{x=11.5,y=.03},q=new{x=11,y=-.02},offsetMm=30});
+   Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=11.5,previousStation=11,p=new{x=11.5,y=.03},q=new{x=11,y=-.02},offsetMm=30});
    Rerun();WaitIssued(folder,11.5);Rerun();Thread.Sleep(500);CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
    Write("NATIVE_FIELD_RESTART_OK saved JWW, new CAD and bridge processes, preserved session, actual Re-run button, duplicate refused");
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();foreach(string file in new[]{"Import.log","State.json","Auto.json","Setup.log"}){string path=Path.Combine(folder,file);if(File.Exists(path))File.Copy(path,Path.Combine(output,"Fixture-"+file),true);}}

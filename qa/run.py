@@ -1,4 +1,4 @@
-import os, subprocess, urllib.request, hashlib, shutil, sys, time, socket, zipfile
+import os, subprocess, urllib.request, hashlib, shutil, sys, time, socket, zipfile, json
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
@@ -30,11 +30,15 @@ subprocess.run([str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
 exe = next(cad.rglob('Jw_win.exe'))
 for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs','app.html'):
     shutil.copy2(root / 'qa/app' / name,exe.parent/name)
+shutil.copy2(root / 'qa/EdgeCheck.py',exe.parent/'EdgeCheck.py')
+subprocess.run([sys.executable,'-m','pip','install','--disable-pip-version-check','playwright==1.56.0'],check=True,timeout=120)
 csc_dir = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319'
 csc = csc_dir / 'csc.exe'
 command = [str(csc), '/noconfig', '/nologo', '/codepage:65001', '/langversion:5', '/target:exe', '/out:' + str(scratch / 'JwCheck.exe'), '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:' + str(csc_dir / 'Accessibility.dll'), str(root / 'qa/JwCheck.cs'), *[str(exe.parent/name) for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs')], '/reference:System.Web.Extensions.dll', '/main:JwCheck']
 subprocess.run(command, check=True, timeout=30)
 subprocess.run([str(csc),'/noconfig','/nologo','/codepage:65001','/langversion:5','/target:exe','/out:'+str(exe.parent/'Bridge.exe'),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Web.Extensions.dll',*[str(exe.parent/name) for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs')]],check=True,timeout=30)
+shutil.copy2(exe.parent/'Bridge.exe',out/'Bridge.exe')
+(out/'NativeSource.json').write_text(json.dumps({name:hashlib.sha256((exe.parent/name).read_bytes()).hexdigest() for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs','app.html')},indent=2))
 shutil.copy2(root / 'qa/Fixture.dxf', exe.parent / 'Fixture.dxf')
 shutil.copy2(root / 'qa/Curve.dxf', exe.parent / 'Curve.dxf')
 if release == '825a':
