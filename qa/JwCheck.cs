@@ -4,6 +4,7 @@ class JwCheck {
  [DllImport("user32.dll")]static extern bool EnumWindows(EnumProc f,IntPtr p);
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll")]static extern bool IsWindowEnabled(IntPtr h);
  [DllImport("user32.dll")]static extern IntPtr GetMenu(IntPtr h);
  [DllImport("user32.dll")]static extern IntPtr GetSubMenu(IntPtr h,int index);
  [DllImport("user32.dll")]static extern int GetMenuItemCount(IntPtr h);
@@ -61,7 +62,7 @@ class JwCheck {
    if(!ScreenToClient(list,ref point)||!GetClientRect(list,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom)throw new Exception("Item is outside the list client area");
    IntPtr position=new IntPtr((point.y<<16)|point.x);if(!PostMessage(list,0x203,new IntPtr(1),position))throw new Exception("Cannot post control click");PostMessage(list,0x202,IntPtr.Zero,position);
   }finally{if(a!=null)Marshal.ReleaseComObject(a);}
-  for(int i=0;i<100;i++){if(done())return;Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
+  for(int i=0;i<100;i++){if(done()){Thread.Sleep(250);for(int n=0;n<60&&!IsWindowEnabled(main);n++)Thread.Sleep(50);return;}Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
  }
  static CadContext ReadDrawing(string probe){if(File.Exists(probe))File.Delete(probe);Activate("Probe_Run.bat",delegate(){return File.Exists(probe);});return CadContext.Parse(File.ReadAllText(probe,Encoding.GetEncoding(932)));}
  static void CheckDrawing(CadContext c,CadLink link,Pt point,int expectedCircles){
@@ -100,7 +101,7 @@ class JwCheck {
  }
  static bool SaveJww(string folder){
   IntPtr fileMenu=GetSubMenu(GetMenu(main),0);for(int m=0;m<GetMenuItemCount(fileMenu);m++){var label=new StringBuilder(256);GetMenuString(fileMenu,(uint)m,label,256,0x400);Write("FILE MENU id="+GetMenuItemID(fileMenu,m)+" text="+label);}
-  string file=Path.Combine(folder,"Work.jww");IntPtr oldList=FindList();if(oldList!=IntPtr.Zero){PostMessage(GetParent(oldList),0x111,new IntPtr(2),IntPtr.Zero);Thread.Sleep(300);}PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(700);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
+  string file=Path.Combine(folder,"Work.jww");IntPtr oldList=FindList();if(oldList!=IntPtr.Zero){PostMessage(GetAncestor(oldList,2),0x111,new IntPtr(2),IntPtr.Zero);Thread.Sleep(300);}ShowWindow(main,9);SetForegroundWindow(main);Thread.Sleep(250);PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(1500);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
   EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&Kind(h)=="#32770")dialog=h;return true;},IntPtr.Zero);
   if(dialog==IntPtr.Zero){Write("SAVE no dialog");return false;}
   EnumChildWindows(dialog,delegate(IntPtr h,IntPtr unused){if(!IsWindowVisible(h))return true;var text=new StringBuilder(2048);SendMessage(h,13,new IntPtr(text.Capacity),text);Write("SAVE CONTROL id="+GetDlgCtrlID(h)+" class="+Kind(h)+" text="+text.ToString());if(Kind(h)=="Edit"&&(GetDlgCtrlID(h)==1152||text.ToString().IndexOf("Fixture",StringComparison.OrdinalIgnoreCase)>=0))edit=h;return true;},IntPtr.Zero);
@@ -141,7 +142,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   NativeApplication(folder,probe);Write("SAVE_JWW "+SaveJww(folder));Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   bool saved=SaveJww(folder);Write("SAVE_JWW "+saved);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");NativeApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }
