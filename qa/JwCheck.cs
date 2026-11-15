@@ -29,7 +29,7 @@ class JwCheck {
  [DllImport("user32.dll")]static extern IntPtr GetAncestor(IntPtr h,uint kind);
  [DllImport("oleacc.dll")]static extern int AccessibleObjectFromWindow(IntPtr h,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out IAccessible a);
  [DllImport("oleacc.dll",EntryPoint="AccessibleObjectFromWindow")]static extern int LegacyObject(IntPtr h,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out CadAccessible a);
- static StreamWriter log;static string output;static int pid;static IntPtr main;
+ static StreamWriter log;static string output,cadExe;static int pid;static IntPtr main;static Process cad;
  static void Write(string s){Console.WriteLine(s);log.WriteLine(s);}
  static string Title(IntPtr h){var s=new StringBuilder(1024);GetWindowText(h,s,s.Capacity);return s.ToString();}
  static string Kind(IntPtr h){var s=new StringBuilder(256);GetClassName(h,s,s.Capacity);return s.ToString();}
@@ -41,6 +41,21 @@ class JwCheck {
  static bool WaitFile(string file){for(int i=0;i<40;i++){if(File.Exists(file))return true;Thread.Sleep(100);}return false;}
  static readonly JavaScriptSerializer json=new JavaScriptSerializer();
  static string Num(double value){return value.ToString("R",CultureInfo.InvariantCulture);}
+ static void LaunchCad(string input){
+  main=IntPtr.Zero;cad=Process.Start(new ProcessStartInfo(cadExe,"\""+input+"\""){WorkingDirectory=Path.GetDirectoryName(cadExe),UseShellExecute=false});pid=cad.Id;
+  for(int i=0;i<150;i++){EnumWindows(delegate(IntPtr h,IntPtr p){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&GetMenu(h)!=IntPtr.Zero)main=h;return true;},IntPtr.Zero);if(main!=IntPtr.Zero)break;Thread.Sleep(100);}
+  if(main==IntPtr.Zero)throw new Exception("CAD main window not found");Thread.Sleep(1800);Write("CAD title="+Title(main));
+ }
+ static Process LaunchBridge(string folder){
+  var bridge=Process.Start(new ProcessStartInfo(Path.Combine(folder,"Bridge.exe")){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder});
+  for(int i=0;i<60;i++){try{Call("health",null);return bridge;}catch(WebException){Thread.Sleep(100);}}throw new Exception("Bridge did not start");
+ }
+ static void Rerun(){
+  IntPtr button=IntPtr.Zero;int matches=0;
+  EnumChildWindows(main,delegate(IntPtr h,IntPtr unused){if(IsWindowVisible(h)&&Kind(h)=="Button"&&Title(h).Contains("再実行")){button=h;matches++;Write("RERUN BUTTON id="+GetDlgCtrlID(h)+" title="+Title(h));}return true;},IntPtr.Zero);
+  if(matches!=1)throw new Exception("Exactly one visible Re-run button is required");PostMessage(button,0xF5,IntPtr.Zero,IntPtr.Zero);
+ }
+ static void WaitIssued(string folder,double station){for(int i=0;i<100;i++){State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));if(state.state=="issued"&&state.station==station){Thread.Sleep(350);return;}Thread.Sleep(80);}throw new Exception("Manual Re-run did not issue the expected point");}
  static string Call(string path,object body){
   var request=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:18718/"+path);request.Proxy=null;request.Timeout=45000;request.ContentType="text/plain;charset=utf-8";request.Headers["Origin"]="http://127.0.0.1:18718";
   if(body!=null){request.Method="POST";byte[] bytes=Encoding.UTF8.GetBytes(json.Serialize(body));request.ContentLength=bytes.Length;using(var stream=request.GetRequestStream())stream.Write(bytes,0,bytes.Length);}
@@ -76,7 +91,7 @@ class JwCheck {
   Write("NATIVE_GEOMETRY_OK planSegments="+plans+" circles="+c.circles.Count+" scale="+link.scale+" expectedPointM="+Num(point.x)+","+Num(point.y)+" planEndPaper="+Num(end.x)+","+Num(end.y));
  }
  static void NativeApplication(string folder,string probe){
-  Process bridge=Process.Start(new ProcessStartInfo(Path.Combine(folder,"Bridge.exe")){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder});
+  Process bridge=LaunchBridge(folder);
   try{
    for(int i=0;i<60;i++){try{Call("health",null);break;}catch(WebException){Thread.Sleep(100);}}
    var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI fixture",planKey="straight-50m",station=10,p=new{x=10,y=0}}));string session=(string)baseline["session"];
@@ -97,6 +112,18 @@ class JwCheck {
    bool refused=false;try{Call("auto/apply",new{session=session,station=11});}catch(WebException){refused=true;}
    if(!refused)throw new Exception("Duplicate apply was not refused");CheckDrawing(ReadDrawing(probe),link,new Pt{x=11,y=-.02},3);Screenshot("app-after-points");
    Write("NATIVE_APPLICATION_OK two automatic point updates, 20mm left/right, all planned segments retained, duplicate refused");
+   string drawing=link.drawing;DateTime beforeSave=File.GetLastWriteTimeUtc(drawing);PostMessage(main,0x111,new IntPtr(57603),IntPtr.Zero);
+   for(int i=0;i<60&&File.GetLastWriteTimeUtc(drawing)<=beforeSave;i++)Thread.Sleep(100);
+   if(File.GetLastWriteTimeUtc(drawing)<=beforeSave)throw new Exception("Updated synthetic JWW was not saved");
+   bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();cad.Kill();cad.WaitForExit(5000);cad.Dispose();
+   LaunchCad(drawing);bridge=LaunchBridge(folder);State resumed=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+   if(resumed.session!=session||resumed.station!=11||resumed.state!="issued")throw new Exception("Restart changed the saved measurement session");
+   Call("field/start",new{site="CI fixture",planKey="straight-50m",session=session});
+   Activate("Field_Run.bat",delegate(){CadLink current=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));return current.fieldReady&&current.pid==pid;});
+   link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));Write("NATIVE_RESTART_READY pid="+pid+" station="+resumed.station);
+   Call("point",new{site="CI fixture",planKey="straight-50m",session=session,station=11.5,previousStation=11,p=new{x=11.5,y=.03},q=new{x=11,y=-.02},offsetMm=30});
+   Rerun();WaitIssued(folder,11.5);Rerun();Thread.Sleep(500);CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
+   Write("NATIVE_FIELD_RESTART_OK saved JWW, new CAD and bridge processes, preserved session, actual Re-run button, duplicate refused");
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();foreach(string file in new[]{"Import.log","State.json","Auto.json","Setup.log"}){string path=Path.Combine(folder,file);if(File.Exists(path))File.Copy(path,Path.Combine(output,"Fixture-"+file),true);}}
  }
  static bool SaveJww(string folder){
@@ -108,7 +135,7 @@ class JwCheck {
   if(edit==IntPtr.Zero){
    IntPtr create=GetDlgItem(dialog,2408);
    if(create!=IntPtr.Zero&&IsWindowVisible(create)){
-    IntPtr directory=GetDlgItem(dialog,1487);if(directory!=IntPtr.Zero){SetWindowText(directory,folder);PostMessage(directory,0x100,new IntPtr(13),IntPtr.Zero);PostMessage(directory,0x101,new IntPtr(13),IntPtr.Zero);Thread.Sleep(350);Write("SAVE directory="+Title(directory));}
+    IntPtr directory=GetDlgItem(dialog,1487);if(directory!=IntPtr.Zero){Write("SAVE directorySet="+SetWindowText(directory,folder)+" readback="+Title(directory));}
     PostMessage(create,0xF5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(450);Screenshot("save-new-name");
     EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner!=(uint)pid||!IsWindowVisible(h)||Kind(h)!="#32770")return true;
      EnumChildWindows(h,delegate(IntPtr c,IntPtr nothing){if(IsWindowVisible(c)){var text=new StringBuilder(1024);SendMessage(c,13,new IntPtr(text.Capacity),text);Write("NEW CONTROL id="+GetDlgCtrlID(c)+" class="+Kind(c)+" text="+text);if(Kind(c)=="Edit"&&GetDlgCtrlID(c)==1491){edit=c;dialog=h;}}return true;},IntPtr.Zero);return true;
@@ -123,14 +150,11 @@ class JwCheck {
  static string Dxf(){return "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1009\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nENTITIES\r\n0\r\nLINE\r\n8\r\nPLAN\r\n62\r\n1\r\n10\r\n0\r\n20\r\n0\r\n11\r\n50000\r\n21\r\n0\r\n0\r\nCIRCLE\r\n8\r\nACTUAL\r\n62\r\n3\r\n10\r\n10000\r\n20\r\n0\r\n40\r\n35\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";}
  [STAThread]static int Main(string[] args){
   output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);log=new StreamWriter(Path.Combine(output,"Windows.log"),false,new UTF8Encoding(false));log.AutoFlush=true;
-  Process cad=null;
   try{
    Write("OS "+Environment.OSVersion+" interactive="+Environment.UserInteractive+" bits="+(IntPtr.Size*8));
    string folder=Path.GetDirectoryName(args[0]),input=Path.Combine(folder,"Fixture.dxf"),probe=Path.Combine(folder,"ProbeIn.txt");if(!File.Exists(input))File.WriteAllText(input,Dxf(),Encoding.ASCII);
    File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM Read-only fixture probe\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
-   cad=Process.Start(new ProcessStartInfo(args[0],"\""+input+"\""){WorkingDirectory=folder,UseShellExecute=false});pid=cad.Id;
-   for(int i=0;i<150;i++){EnumWindows(delegate(IntPtr h,IntPtr p){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&GetMenu(h)!=IntPtr.Zero)main=h;return true;},IntPtr.Zero);if(main!=IntPtr.Zero)break;Thread.Sleep(100);}
-   if(main==IntPtr.Zero)throw new Exception("CAD main window not found");Thread.Sleep(1800);Write("CAD title="+Title(main));Thread.Sleep(200);Screenshot("drawing");
+   cadExe=args[0];LaunchCad(input);Thread.Sleep(200);Screenshot("drawing");bool saved=SaveJww(folder);Write("SAVE_JWW "+saved);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");
    bool success=false;
    foreach(string mode in new[]{"standard","legacy","minimized"}){
     if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
@@ -145,7 +169,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   bool saved=SaveJww(folder);Write("SAVE_JWW "+saved);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");NativeApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   NativeApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }
