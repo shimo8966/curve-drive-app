@@ -1,4 +1,4 @@
-import os, subprocess, urllib.request, hashlib, shutil, sys, time, socket
+import os, subprocess, urllib.request, hashlib, shutil, sys, time, socket, zipfile
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
@@ -28,9 +28,16 @@ print('Official JW_CAD '+release+' installer hash verified', flush=True)
 cad = scratch / 'jww'
 subprocess.run([str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/DIR=' + str(cad)], timeout=150, check=True)
 exe = next(cad.rglob('Jw_win.exe'))
+appzip = scratch / 'app.zip'
+with urllib.request.urlopen('https://raw.githubusercontent.com/shimo8966/curve-drive-app/download-v29/CurveDrive_v29.zip',timeout=30) as response: appzip.write_bytes(response.read())
+assert hashlib.sha256(appzip.read_bytes()).hexdigest()=='f9f1f784eb3180d8a3787b99da2f6433507e287a759471ea05e45640e35b5520'
+with zipfile.ZipFile(appzip) as archive:
+    for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs','app.html'):
+        (exe.parent/name).write_bytes(archive.read('CurveDrive_v29/'+name))
 csc_dir = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319'
 csc = csc_dir / 'csc.exe'
-command = [str(csc), '/noconfig', '/nologo', '/codepage:65001', '/langversion:5', '/target:exe', '/out:' + str(scratch / 'JwCheck.exe'), '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:' + str(csc_dir / 'Accessibility.dll'), str(root / 'qa/JwCheck.cs'), str(root / 'qa/Legacy.cs')]
+command = [str(csc), '/noconfig', '/nologo', '/codepage:65001', '/langversion:5', '/target:exe', '/out:' + str(scratch / 'JwCheck.exe'), '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll', '/reference:System.Windows.Forms.dll', '/reference:' + str(csc_dir / 'Accessibility.dll'), str(root / 'qa/JwCheck.cs'), *[str(exe.parent/name) for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs')], '/reference:System.Web.Extensions.dll', '/main:JwCheck']
 subprocess.run(command, check=True, timeout=30)
+subprocess.run([str(csc),'/noconfig','/nologo','/codepage:65001','/langversion:5','/target:exe','/out:'+str(exe.parent/'Bridge.exe'),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Web.Extensions.dll',*[str(exe.parent/name) for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs')]],check=True,timeout=30)
 shutil.copy2(root / 'qa/Fixture.dxf', exe.parent / 'Fixture.dxf')
-subprocess.run([str(scratch / 'JwCheck.exe'), str(exe), str(out)], check=True, timeout=120)
+subprocess.run([str(scratch / 'JwCheck.exe'), str(exe), str(out)], check=True, timeout=180)

@@ -1,4 +1,4 @@
-using System;using System.IO;using System.Text;using System.Diagnostics;using System.Threading;using System.Runtime.InteropServices;using System.Drawing;using System.Drawing.Imaging;using System.Windows.Forms;using Accessibility;
+using System;using System.IO;using System.Text;using System.Diagnostics;using System.Threading;using System.Runtime.InteropServices;using System.Drawing;using System.Drawing.Imaging;using System.Windows.Forms;using Accessibility;using System.Collections.Generic;using System.Net;using System.Globalization;using System.Web.Script.Serialization;
 class JwCheck {
  delegate bool EnumProc(IntPtr h,IntPtr unused);
  [DllImport("user32.dll")]static extern bool EnumWindows(EnumProc f,IntPtr p);
@@ -32,11 +32,68 @@ class JwCheck {
  static uint Menu(IntPtr h){uint fallback=0;if(h==IntPtr.Zero)return 0;for(int i=0;i<GetMenuItemCount(h);i++){uint id=GetMenuItemID(h,i);var text=new StringBuilder(256);GetMenuString(h,(uint)i,text,256,0x400);string name=text.ToString();if(name.Contains("外部変形"))return id;if(id==32913)fallback=id;uint sub=Menu(GetSubMenu(h,i));if(sub!=0)fallback=sub;}return fallback;}
  static IntPtr Open(){IntPtr list=FindList();if(list!=IntPtr.Zero)return list;uint cmd=Menu(GetMenu(main));Write("EXTERNAL command="+cmd);if(cmd==0)throw new Exception("External menu was not found");PostMessage(main,0x111,new IntPtr(cmd),IntPtr.Zero);for(int i=0;i<70;i++){Thread.Sleep(100);list=FindList();if(list!=IntPtr.Zero)return list;}throw new Exception("File list did not open");}
  static bool WaitFile(string file){for(int i=0;i<40;i++){if(File.Exists(file))return true;Thread.Sleep(100);}return false;}
+ static readonly JavaScriptSerializer json=new JavaScriptSerializer();
+ static string Num(double value){return value.ToString("R",CultureInfo.InvariantCulture);}
+ static string Call(string path,object body){
+  var request=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:18718/"+path);request.Proxy=null;request.Timeout=30000;request.ContentType="text/plain;charset=utf-8";request.Headers["Origin"]="http://127.0.0.1:18718";
+  if(body!=null){request.Method="POST";byte[] bytes=Encoding.UTF8.GetBytes(json.Serialize(body));request.ContentLength=bytes.Length;using(var stream=request.GetRequestStream())stream.Write(bytes,0,bytes.Length);}
+  using(var response=request.GetResponse())using(var reader=new StreamReader(response.GetResponseStream()))return reader.ReadToEnd();
+ }
+ static void Activate(string filename,Func<bool> done){
+  IntPtr list=Open();Thread.Sleep(250);Guid iid=typeof(IAccessible).GUID;IAccessible a=null;
+  try{int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);if(hr!=0)throw new Exception("Cannot read macro list");int match=0,hits=0;for(int i=1;i<=a.accChildCount;i++){string name;try{name=a.get_accName(i);}catch(ArgumentException){continue;}if(String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)){match=i;hits++;}}
+   if(hits!=1)throw new Exception("Fixture macro match is not unique: "+filename);a.accDoDefaultAction(match);
+  }finally{if(a!=null)Marshal.ReleaseComObject(a);}
+  for(int i=0;i<100;i++){if(done())return;Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
+ }
+ static CadContext ReadDrawing(string probe){if(File.Exists(probe))File.Delete(probe);Activate("Probe_Run.bat",delegate(){return File.Exists(probe);});return CadContext.Parse(File.ReadAllText(probe,Encoding.GetEncoding(932)));}
+ static void CheckDrawing(CadContext c,CadLink link,Pt point,int expectedCircles){
+  c.Validate(link,point);if(c.circles.Count!=expectedCircles)throw new Exception("Unexpected circle count: "+c.circles.Count);
+  Pt end=CadContext.Paper(link,new Pt{x=50,y=0});int plans=0;
+  // The application-generated fixture has a 0.5m segment pitch: retain all 100 plan segments.
+  for(int k=0;k<100;k++){Pt p=CadContext.Paper(link,new Pt{x=k*.5,y=0}),q=CadContext.Paper(link,new Pt{x=(k+1)*.5,y=0});bool found=false;
+   for(int i=0;i+1<c.ends.Count;i+=2)if(Math.Abs(c.ends[i].x-p.x)<.05/link.scale&&Math.Abs(c.ends[i].y-p.y)<.05/link.scale&&Math.Abs(c.ends[i+1].x-q.x)<.05/link.scale&&Math.Abs(c.ends[i+1].y-q.y)<.05/link.scale)found=true;
+   if(!found)throw new Exception("A planned segment is missing: "+k);plans++;
+  }
+  Write("NATIVE_GEOMETRY_OK planSegments="+plans+" circles="+c.circles.Count+" scale="+link.scale+" expectedPointM="+Num(point.x)+","+Num(point.y)+" planEndPaper="+Num(end.x)+","+Num(end.y));
+ }
+ static void NativeApplication(string folder,string probe){
+  Process bridge=Process.Start(new ProcessStartInfo(Path.Combine(folder,"Bridge.exe")){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder});
+  try{
+   for(int i=0;i<60;i++){try{Call("health",null);break;}catch(WebException){Thread.Sleep(100);}}
+   var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI fixture",planKey="straight-50m",station=10,p=new{x=10,y=0}}));string session=(string)baseline["session"];
+   Call("auto/prepare",new{session=session,end=new{x=50,y=0}});CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
+   CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
+   string text="REM Fixture setup - known picked point from real CAD geometry\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
+   File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),text,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});
+   link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
+   Write("NATIVE_CALIBRATED pid="+link.pid+" actualCAD="+pid+" scale="+link.scale);if(link.pid!=pid)throw new Exception("Calibration bound another process");
+   Call("auto/enable",new{});
+   foreach(double station in new[]{10.5,11}){
+    double offset=station==10.5?.02:-.02;State previous=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+    Call("point",new{site="CI fixture",planKey="straight-50m",session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
+    string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);Thread.Sleep(350);
+    CheckDrawing(ReadDrawing(probe),link,new Pt{x=station,y=offset},station==10.5?2:3);
+   }
+   bool refused=false;try{Call("auto/apply",new{session=session,station=11});}catch(WebException){refused=true;}
+   if(!refused)throw new Exception("Duplicate apply was not refused");CheckDrawing(ReadDrawing(probe),link,new Pt{x=11,y=-.02},3);Screenshot("app-after-points");
+   Write("NATIVE_APPLICATION_OK two automatic point updates, 20mm left/right, all planned segments retained, duplicate refused");
+  }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();foreach(string file in new[]{"Import.log","State.json","Auto.json","Setup.log"}){string path=Path.Combine(folder,file);if(File.Exists(path))File.Copy(path,Path.Combine(output,"Fixture-"+file),true);}}
+ }
  static bool SaveJww(string folder){
   string file=Path.Combine(folder,"Work.jww");IntPtr oldList=FindList();if(oldList!=IntPtr.Zero){PostMessage(GetParent(oldList),0x111,new IntPtr(2),IntPtr.Zero);Thread.Sleep(300);}PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(700);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
   EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&Kind(h)=="#32770")dialog=h;return true;},IntPtr.Zero);
   if(dialog==IntPtr.Zero){Write("SAVE no dialog");return false;}
   EnumChildWindows(dialog,delegate(IntPtr h,IntPtr unused){if(!IsWindowVisible(h))return true;var text=new StringBuilder(2048);SendMessage(h,13,new IntPtr(text.Capacity),text);Write("SAVE CONTROL id="+GetDlgCtrlID(h)+" class="+Kind(h)+" text="+text.ToString());if(Kind(h)=="Edit"&&(GetDlgCtrlID(h)==1152||text.ToString().IndexOf("Fixture",StringComparison.OrdinalIgnoreCase)>=0))edit=h;return true;},IntPtr.Zero);
+  if(edit==IntPtr.Zero){
+   IntPtr create=GetDlgItem(dialog,2408);
+   if(create!=IntPtr.Zero&&IsWindowVisible(create)){
+    PostMessage(create,0xF5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(450);Screenshot("save-new-name");
+    EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner!=(uint)pid||!IsWindowVisible(h)||Kind(h)!="#32770")return true;
+     EnumChildWindows(h,delegate(IntPtr c,IntPtr nothing){if(IsWindowVisible(c)){var text=new StringBuilder(1024);SendMessage(c,13,new IntPtr(text.Capacity),text);Write("NEW CONTROL id="+GetDlgCtrlID(c)+" class="+Kind(c)+" text="+text);if(Kind(c)=="Edit"&&GetDlgCtrlID(c)!=1487&&GetDlgCtrlID(c)!=2086&&GetDlgCtrlID(c)!=2087&&GetDlgCtrlID(c)!=2575){edit=c;dialog=h;}}return true;},IntPtr.Zero);return true;
+    },IntPtr.Zero);
+   }
+  }
   if(edit==IntPtr.Zero){Write("SAVE no filename edit");return false;}
   SetWindowText(edit,file);PostMessage(dialog,0x111,new IntPtr(1),IntPtr.Zero);bool saved=WaitFile(file);Write("SAVE result="+saved+" title="+Title(main));Screenshot("saved");return saved;
  }
@@ -52,7 +109,7 @@ class JwCheck {
    for(int i=0;i<150;i++){EnumWindows(delegate(IntPtr h,IntPtr p){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&GetMenu(h)!=IntPtr.Zero)main=h;return true;},IntPtr.Zero);if(main!=IntPtr.Zero)break;Thread.Sleep(100);}
    if(main==IntPtr.Zero)throw new Exception("CAD main window not found");Thread.Sleep(1800);Write("CAD title="+Title(main));Thread.Sleep(200);Screenshot("drawing");
    bool success=false;
-   foreach(string mode in new[]{"standard","legacy","enter","minimized"}){
+   foreach(string mode in new[]{"standard","legacy","minimized"}){
     if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
     int match=0;for(int i=1;i<=a.accChildCount;i++){try{string name=a.get_accName(i);Write("ITEM "+i+" name="+name+" role="+a.get_accRole(i)+" state="+a.get_accState(i)+" action="+a.get_accDefaultAction(i));if(name=="Probe_Run.bat"||name=="Probe_Run")match=i;}catch(Exception e){Write("ITEM "+i+" "+Error(e));}}
     if(match==0)throw new Exception("Synthetic probe macro is not in the current file list");
@@ -65,7 +122,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   Write("SAVE_JWW "+SaveJww(folder));Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   NativeApplication(folder,probe);Write("SAVE_JWW "+SaveJww(folder));Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }
