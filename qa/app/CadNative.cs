@@ -52,9 +52,12 @@ class CadIdentity {
   if(Launcher(rows,current)!=expected)throw new Fault(409,"AUTO_CAD_LAUNCHER_CHANGED");
  }
  public static CadWindowInfo SelectWindow(List<CadWindowInfo> windows,int pid,string drawing,bool busy){
-  string expected=Path.GetFileName(drawing)+" - jw_win";CadWindowInfo found=null;int count=0;
+  string expected=Path.GetFileName(drawing)+" - jw_win";
+  // Native JWW files use the stem in Jw_cad's title; DXF files retain their extension.
+  string native=String.Equals(Path.GetExtension(drawing),".jww",StringComparison.OrdinalIgnoreCase)?Path.GetFileNameWithoutExtension(drawing)+" - jw_win":expected;
+  CadWindowInfo found=null;int count=0;
   foreach(var w in windows){
-   if(w.pid!=pid||w.owned||w.kind==null||!w.kind.StartsWith("Afx:",StringComparison.Ordinal)||!String.Equals(w.title,expected,StringComparison.OrdinalIgnoreCase))continue;
+   if(w.pid!=pid||w.owned||w.kind==null||!w.kind.StartsWith("Afx:",StringComparison.Ordinal)||(!String.Equals(w.title,expected,StringComparison.OrdinalIgnoreCase)&&!String.Equals(w.title,native,StringComparison.OrdinalIgnoreCase)))continue;
    if(!busy&&!w.visible)continue;
    found=w;count++;
   }

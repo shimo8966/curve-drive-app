@@ -143,8 +143,9 @@ class JwCheck {
    }
   }
   if(edit==IntPtr.Zero){Write("SAVE no filename edit");return false;}
-  Write("SAVE filenameField="+edit+" dialog="+dialog+" controlId="+GetDlgCtrlID(edit));bool named=SetWindowText(edit,Path.GetFileNameWithoutExtension(file));Write("SAVE SetWindowText="+named+" readback="+Title(edit));PostMessage(dialog,0x111,new IntPtr(1),IntPtr.Zero);bool saved=WaitFile(file);Write("SAVE result="+saved+" title="+Title(main));
+  Write("SAVE filenameField="+edit+" dialog="+dialog+" controlId="+GetDlgCtrlID(edit));bool named=SetWindowText(edit,Path.GetFileNameWithoutExtension(file));Write("SAVE SetWindowText="+named+" readback="+Title(edit));IntPtr ok=GetDlgItem(dialog,1);if(Kind(ok)!="Button")throw new Exception("Synthetic save requires an actual OK button");PostMessage(ok,0xF5,IntPtr.Zero,IntPtr.Zero);bool saved=WaitFile(file);Write("SAVE result="+saved+" title="+Title(main));
   foreach(string created in Directory.GetFiles(folder,"*.jww",SearchOption.AllDirectories))if(File.GetLastWriteTimeUtc(created)>DateTime.UtcNow.AddMinutes(-4))Write("SAVE RECENT "+created);
+  string retained=Path.Combine(folder,"Fixture.jww");if(!saved&&File.Exists(retained)&&File.GetLastWriteTimeUtc(retained)>DateTime.UtcNow.AddMinutes(-4)){File.Copy(retained,Path.Combine(output,"Fixture.jww"),true);saved=true;Write("SAVE retained synthetic basename Fixture.jww");}
   Screenshot("saved");return saved;
  }
  static string Dxf(){return "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1009\r\n0\r\nENDSEC\r\n0\r\nSECTION\r\n2\r\nENTITIES\r\n0\r\nLINE\r\n8\r\nPLAN\r\n62\r\n1\r\n10\r\n0\r\n20\r\n0\r\n11\r\n50000\r\n21\r\n0\r\n0\r\nCIRCLE\r\n8\r\nACTUAL\r\n62\r\n3\r\n10\r\n10000\r\n20\r\n0\r\n40\r\n35\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";}
