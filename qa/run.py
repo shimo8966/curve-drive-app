@@ -1,4 +1,4 @@
-import os, subprocess, urllib.request, hashlib, shutil
+import os, subprocess, urllib.request, hashlib, shutil, sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
@@ -7,10 +7,13 @@ out.mkdir(exist_ok=True)
 scratch = Path(os.environ['RUNNER_TEMP']) / 'curve-ci'
 scratch.mkdir(exist_ok=True)
 installer = scratch / 'jww.exe'
-url = 'https://www.jwcad.net/download/jww825a.exe'
+release = sys.argv[1] if len(sys.argv)>1 else '825a'
+versions = {'825a':('jww825a.exe','47632125be65d95c0a3722521dfa892cab2ecadd043194494e2e6feb12c87d78'), '10038':('jww10038.exe','8aacc55c4d63775c351c955709c30716d3efb0e0038e720d6a0808153670c370')}
+name, digest = versions[release]
+url = 'https://www.jwcad.net/download/' + name
 urllib.request.urlretrieve(url, installer)
-assert hashlib.sha256(installer.read_bytes()).hexdigest() == '47632125be65d95c0a3722521dfa892cab2ecadd043194494e2e6feb12c87d78', 'Official installer hash changed'
-print('Official JW_CAD installer hash verified', flush=True)
+assert hashlib.sha256(installer.read_bytes()).hexdigest() == digest, 'Official installer hash changed'
+print('Official JW_CAD '+release+' installer hash verified', flush=True)
 cad = scratch / 'jww'
 subprocess.run([str(installer), '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/DIR=' + str(cad)], timeout=150, check=True)
 exe = next(cad.rglob('Jw_win.exe'))

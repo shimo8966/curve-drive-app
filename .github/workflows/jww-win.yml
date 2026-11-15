@@ -9,17 +9,21 @@ concurrency:
   cancel-in-progress: true
 jobs:
   fixture:
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [825a, 10038]
     runs-on: windows-2022
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Run isolated Windows and JW_CAD check
         shell: cmd
-        run: python qa\run.py
+        run: python qa\run.py "${{ matrix.release }}"
       - name: Save synthetic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: jww-windows-fixture
+          name: jww-windows-${{ matrix.release }}
           path: qa-out
           retention-days: 7
