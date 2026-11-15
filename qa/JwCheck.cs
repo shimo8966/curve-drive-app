@@ -20,6 +20,8 @@ class JwCheck {
  [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
  [DllImport("user32.dll")]static extern IntPtr GetParent(IntPtr h);
+ [DllImport("user32.dll")]static extern bool IsIconic(IntPtr h);
+ [DllImport("user32.dll")]static extern IntPtr GetAncestor(IntPtr h,uint kind);
  [DllImport("oleacc.dll")]static extern int AccessibleObjectFromWindow(IntPtr h,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out IAccessible a);
  [DllImport("oleacc.dll",EntryPoint="AccessibleObjectFromWindow")]static extern int LegacyObject(IntPtr h,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out CadAccessible a);
  static StreamWriter log;static string output;static int pid;static IntPtr main;
@@ -40,7 +42,7 @@ class JwCheck {
   using(var response=request.GetResponse())using(var reader=new StreamReader(response.GetResponseStream()))return reader.ReadToEnd();
  }
  static void Activate(string filename,Func<bool> done){
-  IntPtr list=Open();Thread.Sleep(250);Guid iid=typeof(IAccessible).GUID;IAccessible a=null;
+  ShowWindow(main,9);IntPtr list=Open();IntPtr dialog=GetAncestor(list,2);ShowWindow(dialog,9);Application.DoEvents();Thread.Sleep(300);Write("ACTIVATE "+filename+" mainIconic="+IsIconic(main)+" dialogIconic="+IsIconic(dialog)+" parentKind="+Kind(GetParent(list))+" rootKind="+Kind(dialog));Guid iid=typeof(IAccessible).GUID;IAccessible a=null;
   try{int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);if(hr!=0)throw new Exception("Cannot read macro list");int match=0,hits=0;for(int i=1;i<=a.accChildCount;i++){string name;try{name=a.get_accName(i);}catch(ArgumentException){continue;}if(String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)){match=i;hits++;}}
    if(hits!=1)throw new Exception("Fixture macro match is not unique: "+filename);a.accDoDefaultAction(match);
   }finally{if(a!=null)Marshal.ReleaseComObject(a);}
