@@ -87,7 +87,7 @@ partial class Program {
    });
    if(Environment.OSVersion.Platform==PlatformID.Win32NT)worker.SetApartmentState(ApartmentState.STA);
    worker.IsBackground=true;worker.Start();
-   if(!worker.Join(22000))failure=new Fault(409,"AUTO_RESULT_UNKNOWN_NEW_DXF_REQUIRED");
+   if(!worker.Join(30000))failure=new Fault(409,"AUTO_RESULT_UNKNOWN_NEW_DXF_REQUIRED");
    if(failure!=null){
     AutoTrace("AUTO_APPLY_STOP "+(failure is Fault?failure.Message:"AUTO_WINDOWS_OPERATION_FAILED"));
     using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(current!=null&&current.token==a.token){current.enabled=false;current.message=failure is Fault?failure.Message:"AUTO_WINDOWS_OPERATION_FAILED";AutoSave(current);}}

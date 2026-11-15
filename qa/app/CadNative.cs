@@ -240,11 +240,28 @@ class CadNative {
    if(list==IntPtr.Zero)throw new Fault(409,"AUTO_FILE_DIALOG_NOT_FOUND");
    Restore(GetAncestor(list,2),"file-dialog",trace);
    trace("AUTO_UI_LIST_FOUND");
-   Choose(list,link.Macro,delegate(){
+   for(int attempt=0;attempt<2;attempt++)try{
+    Choose(list,link.Macro,delegate(){
     Find(link,true);
     if(FileList(main)!=list)throw new Fault(409,"AUTO_FILE_DIALOG_CHANGED");
     if(completed())throw new Fault(409,"AUTO_ALREADY_ISSUED_CHECK_STATUS");
-   },trace);
+    },trace);break;
+   }catch(Fault e){
+    if(e.Message!="AUTO_ITEM_NOT_VISIBLE"||attempt!=0)throw;
+    // No default action has been called: safely rebuild only this verified BAT picker.
+    trace("AUTO_UI_REOPEN_PICKER_BEFORE_ACTION");
+    if(FileList(main)!=list)throw new Fault(409,"AUTO_FILE_DIALOG_CHANGED");
+    PostMessage(GetAncestor(list,2),0x111,new IntPtr(2),IntPtr.Zero);
+    until=DateTime.UtcNow.AddSeconds(3);
+    while(DateTime.UtcNow<until&&FileList(main)!=IntPtr.Zero)Thread.Sleep(50);
+    if(FileList(main)!=IntPtr.Zero||!IsWindowEnabled(main.handle))throw new Fault(409,"AUTO_FILE_DIALOG_CHANGED");
+    Restore(main.handle,"main-before-reopen",trace);
+    if(!PostMessage(main.handle,0x111,new IntPtr((long)command),IntPtr.Zero))throw new Fault(409,"AUTO_MENU_FAILED");
+    list=IntPtr.Zero;until=DateTime.UtcNow.AddSeconds(5);
+    while(DateTime.UtcNow<until){list=FileList(main);if(list!=IntPtr.Zero)break;Thread.Sleep(80);}
+    if(list==IntPtr.Zero)throw new Fault(409,"AUTO_FILE_DIALOG_NOT_FOUND");
+    Restore(GetAncestor(list,2),"reopened-dialog",trace);
+   }
    until=DateTime.UtcNow.AddSeconds(12);
    while(DateTime.UtcNow<until){if(completed()){Thread.Sleep(250);return;}Thread.Sleep(80);}
    throw new Fault(409,"AUTO_RESULT_UNKNOWN_NEW_DXF_REQUIRED");

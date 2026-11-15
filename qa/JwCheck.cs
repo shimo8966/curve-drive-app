@@ -37,14 +37,20 @@ class JwCheck {
  static readonly JavaScriptSerializer json=new JavaScriptSerializer();
  static string Num(double value){return value.ToString("R",CultureInfo.InvariantCulture);}
  static string Call(string path,object body){
-  var request=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:18718/"+path);request.Proxy=null;request.Timeout=30000;request.ContentType="text/plain;charset=utf-8";request.Headers["Origin"]="http://127.0.0.1:18718";
+  var request=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:18718/"+path);request.Proxy=null;request.Timeout=45000;request.ContentType="text/plain;charset=utf-8";request.Headers["Origin"]="http://127.0.0.1:18718";
   if(body!=null){request.Method="POST";byte[] bytes=Encoding.UTF8.GetBytes(json.Serialize(body));request.ContentLength=bytes.Length;using(var stream=request.GetRequestStream())stream.Write(bytes,0,bytes.Length);}
   using(var response=request.GetResponse())using(var reader=new StreamReader(response.GetResponseStream()))return reader.ReadToEnd();
  }
- static void Activate(string filename,Func<bool> done){
+ static void Activate(string filename,Func<bool> done,int attempt=0){
   ShowWindow(main,9);IntPtr list=Open();IntPtr dialog=GetAncestor(list,2);ShowWindow(dialog,9);Application.DoEvents();Thread.Sleep(300);Write("ACTIVATE "+filename+" mainIconic="+IsIconic(main)+" dialogIconic="+IsIconic(dialog)+" parentKind="+Kind(GetParent(list))+" rootKind="+Kind(dialog));Guid iid=typeof(IAccessible).GUID;IAccessible a=null;
   try{int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);if(hr!=0)throw new Exception("Cannot read macro list");int match=0,hits=0;for(int i=1;i<=a.accChildCount;i++){string name;try{name=a.get_accName(i);}catch(ArgumentException){continue;}if(String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)){match=i;hits++;}}
-   if(hits!=1)throw new Exception("Fixture macro match is not unique: "+filename);a.accDoDefaultAction(match);
+   if(hits!=1)throw new Exception("Fixture macro match is not unique: "+filename);
+   int state=(int)a.get_accState(match);Write("ACTIVATE itemState="+state);
+   if((state&0x18000)!=0){
+    if(attempt!=0)throw new Exception("Fixture file list is still not visible");Marshal.ReleaseComObject(a);a=null;PostMessage(dialog,0x111,new IntPtr(2),IntPtr.Zero);
+    for(int i=0;i<40&&FindList()!=IntPtr.Zero;i++)Thread.Sleep(50);Activate(filename,done,attempt+1);return;
+   }
+   a.accDoDefaultAction(match);
   }finally{if(a!=null)Marshal.ReleaseComObject(a);}
   for(int i=0;i<100;i++){if(done())return;Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
  }
@@ -74,6 +80,7 @@ class JwCheck {
    foreach(double station in new[]{10.5,11}){
     double offset=station==10.5?.02:-.02;State previous=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
     Call("point",new{site="CI fixture",planKey="straight-50m",session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
+    if(station==11){IntPtr pendingList=Open();ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER");}
     string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);Thread.Sleep(350);
     CheckDrawing(ReadDrawing(probe),link,new Pt{x=station,y=offset},station==10.5?2:3);
    }
@@ -83,6 +90,7 @@ class JwCheck {
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();foreach(string file in new[]{"Import.log","State.json","Auto.json","Setup.log"}){string path=Path.Combine(folder,file);if(File.Exists(path))File.Copy(path,Path.Combine(output,"Fixture-"+file),true);}}
  }
  static bool SaveJww(string folder){
+  IntPtr fileMenu=GetSubMenu(GetMenu(main),0);for(int m=0;m<GetMenuItemCount(fileMenu);m++){var label=new StringBuilder(256);GetMenuString(fileMenu,(uint)m,label,256,0x400);Write("FILE MENU id="+GetMenuItemID(fileMenu,m)+" text="+label);}
   string file=Path.Combine(folder,"Work.jww");IntPtr oldList=FindList();if(oldList!=IntPtr.Zero){PostMessage(GetParent(oldList),0x111,new IntPtr(2),IntPtr.Zero);Thread.Sleep(300);}PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(700);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
   EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&Kind(h)=="#32770")dialog=h;return true;},IntPtr.Zero);
   if(dialog==IntPtr.Zero){Write("SAVE no dialog");return false;}

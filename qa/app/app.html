@@ -171,7 +171,7 @@ function autoReason(code){const messages={
  AUTO_NOT_ENABLED_OR_NO_PENDING:'自動連携ONと、受信済みの新しい測点が必要です。'
  };return (messages[code]?messages[code]+' ':'')+code}
 async function bridgeRequest(path,body){
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),path==='auto/apply'?30000:8000);
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),path==='auto/apply'?45000:8000);
  try{
   const opts={method:body?'POST':'GET',cache:'no-store',signal:controller.signal};if(body){opts.headers={'Content-Type':'text/plain;charset=utf-8'};opts.body=JSON.stringify(body)}
   let response,result;
@@ -219,7 +219,7 @@ async function bridgeSend(selectedStation){
   bridgeText('延長 '+p.s+'m をCADへ自動引渡ししました。CADの描画位置を確認してください。',true);
  }else bridgeText('PC受信済み：延長 '+p.s+'m。CADでの描画は未確認です。自動連携はOFFです。'+(last.automation&&last.automation.prepared?'再送・手動取り込みをせず、連携状態とImport.logを確認してください。':'手動の場合は Curve_Latest.bat を一回実行してください。'),true);
  return true;
- }catch(err){if(accepted)bridgeText('PC受信後に自動連携を停止しました：'+err.message+'。再送・終点の再登録はせず、連携状態を確認してください。',false);else sendFailure(err);return false}finally{setBusy(false)}
+ }catch(err){if(accepted){try{const stopped=await bridgeRequest('latest');showAuto(stopped.automation)}catch{}bridgeText('PC受信後に自動連携を停止しました：'+err.message+'。再送・終点の再登録はせず、連携状態を確認してください。',false)}else sendFailure(err);return false}finally{setBusy(false)}
 }
 $('bridgeSend').onclick=()=>bridgeSend();$('bridgeBaseline').onclick=bridgeBaseline;$('bridgeTest').onclick=bridgeCheck;
 
