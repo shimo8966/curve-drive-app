@@ -113,6 +113,8 @@ class CadNative {
   public string DefaultAction(int child){return accessible.DefaultAction(child);}
   public void Invoke(int child){
    // Control-directed activation avoids the unsupported MSAA default action. No global mouse input.
+   var kind=new StringBuilder(256);GetClassName(window,kind,kind.Capacity);
+   if(kind.ToString()!="SysListView32"||!IsWindowVisible(window)||!IsWindowEnabled(window))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
    accessible.Select(2,child);
    if((State(child)&2)==0)throw new Fault(409,"AUTO_ITEM_SELECTION_NOT_CONFIRMED");
    string name=Name(child);if(!String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)&&!String.Equals(name,Path.GetFileNameWithoutExtension(filename),StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
@@ -266,7 +268,7 @@ class CadNative {
     },trace);break;
    }catch(Fault e){
     if((e.Message!="AUTO_ITEM_NOT_VISIBLE"&&e.Message!="AUTO_ITEM_NOT_CLICKABLE")||attempt!=0)throw;
-    // No default action has been called: safely rebuild only this verified BAT picker.
+    // No control activation was posted: safely rebuild only this verified BAT picker.
     trace("AUTO_UI_REOPEN_PICKER_BEFORE_ACTION");
     if(FileList(main)!=list)throw new Fault(409,"AUTO_FILE_DIALOG_CHANGED");
     PostMessage(GetAncestor(list,2),0x111,new IntPtr(2),IntPtr.Zero);

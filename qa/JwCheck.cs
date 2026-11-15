@@ -110,7 +110,7 @@ class JwCheck {
    if(create!=IntPtr.Zero&&IsWindowVisible(create)){
     PostMessage(create,0xF5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(450);Screenshot("save-new-name");
     EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner!=(uint)pid||!IsWindowVisible(h)||Kind(h)!="#32770")return true;
-     EnumChildWindows(h,delegate(IntPtr c,IntPtr nothing){if(IsWindowVisible(c)){var text=new StringBuilder(1024);SendMessage(c,13,new IntPtr(text.Capacity),text);Write("NEW CONTROL id="+GetDlgCtrlID(c)+" class="+Kind(c)+" text="+text);if(Kind(c)=="Edit"&&GetDlgCtrlID(c)!=1487&&GetDlgCtrlID(c)!=2086&&GetDlgCtrlID(c)!=2087&&GetDlgCtrlID(c)!=2575){edit=c;dialog=h;}}return true;},IntPtr.Zero);return true;
+     EnumChildWindows(h,delegate(IntPtr c,IntPtr nothing){if(IsWindowVisible(c)){var text=new StringBuilder(1024);SendMessage(c,13,new IntPtr(text.Capacity),text);Write("NEW CONTROL id="+GetDlgCtrlID(c)+" class="+Kind(c)+" text="+text);if(Kind(c)=="Edit"&&GetDlgCtrlID(c)==1491){edit=c;dialog=h;}}return true;},IntPtr.Zero);return true;
     },IntPtr.Zero);
    }
   }
