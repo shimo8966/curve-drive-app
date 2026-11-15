@@ -155,7 +155,7 @@ class JwCheck {
    Write("OS "+Environment.OSVersion+" interactive="+Environment.UserInteractive+" bits="+(IntPtr.Size*8));
    string folder=Path.GetDirectoryName(args[0]),input=Path.Combine(folder,"Fixture.dxf"),probe=Path.Combine(folder,"ProbeIn.txt");if(!File.Exists(input))File.WriteAllText(input,Dxf(),Encoding.ASCII);
    File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM Read-only fixture probe\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
-   cadExe=args[0];LaunchCad(input);Thread.Sleep(200);Screenshot("drawing");bool saved=SaveJww(folder);Write("SAVE_JWW "+saved);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");
+   string nativeInput=Path.Combine(folder,"Fixture.jww");bool seeded=File.Exists(nativeInput);cadExe=args[0];LaunchCad(seeded?nativeInput:input);Thread.Sleep(200);Screenshot("drawing");bool saved=seeded||SaveJww(folder);Write("SAVE_JWW "+saved+" nativeSeed="+seeded);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");
    bool success=false;
    foreach(string mode in new[]{"standard","legacy","minimized"}){
     if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
