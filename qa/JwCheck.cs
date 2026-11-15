@@ -16,6 +16,10 @@ class JwCheck {
  [DllImport("user32.dll")]static extern int GetDlgCtrlID(IntPtr h);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr SendMessage(IntPtr h,uint m,IntPtr w,StringBuilder text);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool SetWindowText(IntPtr h,string text);
+ [StructLayout(LayoutKind.Sequential)]struct Point{public int x,y;}
+ [StructLayout(LayoutKind.Sequential)]struct Rect{public int left,top,right,bottom;}
+ [DllImport("user32.dll")]static extern bool ScreenToClient(IntPtr h,ref Point point);
+ [DllImport("user32.dll")]static extern bool GetClientRect(IntPtr h,out Rect rect);
  [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
  [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
@@ -50,7 +54,12 @@ class JwCheck {
     if(attempt!=0)throw new Exception("Fixture file list is still not visible");Marshal.ReleaseComObject(a);a=null;PostMessage(dialog,0x111,new IntPtr(2),IntPtr.Zero);
     for(int i=0;i<40&&FindList()!=IntPtr.Zero;i++)Thread.Sleep(50);Activate(filename,done,attempt+1);return;
    }
-   a.accDoDefaultAction(match);
+   a.accSelect(2,match);Write("ACTIVATE selectedState="+a.get_accState(match));
+   if(((int)a.get_accState(match)&2)==0)throw new Exception("Selection not confirmed");
+   int left,top,width,height;a.accLocation(out left,out top,out width,out height,match);var point=new Point{x=left+Math.Min(20,width/2),y=top+height/2};Write("ACTIVATE bounds="+left+","+top+","+width+","+height);
+   object hit=a.accHitTest(point.x,point.y);if(!(hit is int)||(int)hit!=match)throw new Exception("Hit-test disagrees with exact filename");Rect rect;
+   if(!ScreenToClient(list,ref point)||!GetClientRect(list,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom)throw new Exception("Item is outside the list client area");
+   IntPtr position=new IntPtr((point.y<<16)|point.x);if(!PostMessage(list,0x203,new IntPtr(1),position))throw new Exception("Cannot post control click");PostMessage(list,0x202,IntPtr.Zero,position);
   }finally{if(a!=null)Marshal.ReleaseComObject(a);}
   for(int i=0;i<100;i++){if(done())return;Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
  }

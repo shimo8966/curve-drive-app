@@ -97,21 +97,39 @@ class CadListChoice {
   if(!Matches(Read("verify-name",delegate(){return list.Name(match);},trace),filename))throw new Fault(409,"AUTO_ITEM_CHANGED");
   if((Read("verify-visibility",delegate(){return list.State(match);},trace)&0x18000)!=0)throw new Fault(409,"AUTO_ITEM_NOT_VISIBLE");
   trace("AUTO_UI_DEFAULT_ACTION_START child="+match);
-  try{list.Invoke(match);}catch(Exception e){trace(FailureDetail("default-action",e));throw new Fault(409,"AUTO_ITEM_ACTION_FAILED_CHECK_STATUS");}
+  try{list.Invoke(match);}catch(Fault){throw;}catch(Exception e){trace(FailureDetail("default-action",e));throw new Fault(409,"AUTO_ITEM_ACTION_FAILED_CHECK_STATUS");}
   trace("AUTO_UI_DEFAULT_ACTION_RETURNED");
  }
 }
 class CadNative {
  sealed class ListReader:CadListReader {
   readonly CadAccessible accessible;
-  public ListReader(CadAccessible value){accessible=value;}
+  readonly IntPtr window;readonly string filename;
+  public ListReader(CadAccessible value,IntPtr handle,string expected){accessible=value;window=handle;filename=expected;}
   public int Count(){return accessible.Count();}
   public string Name(int child){return accessible.Name(child);}
   public int Role(int child){object value=accessible.Role(child);return value is int?(int)value:-1;}
   public int State(int child){object value=accessible.State(child);if(!(value is int))throw new Fault(409,"AUTO_LIST_READ_FAILED");return (int)value;}
   public string DefaultAction(int child){return accessible.DefaultAction(child);}
-  public void Invoke(int child){accessible.Invoke(child);}
+  public void Invoke(int child){
+   // Control-directed activation avoids the unsupported MSAA default action. No global mouse input.
+   accessible.Select(2,child);
+   if((State(child)&2)==0)throw new Fault(409,"AUTO_ITEM_SELECTION_NOT_CONFIRMED");
+   string name=Name(child);if(!String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)&&!String.Equals(name,Path.GetFileNameWithoutExtension(filename),StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
+   int left,top,width,height;accessible.Location(out left,out top,out width,out height,child);
+   if(width<=0||height<=0)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   var point=new ClickPoint{x=left+Math.Min(20,width/2),y=top+height/2};object hit=accessible.HitTest(point.x,point.y);
+   if(!(hit is int)||(int)hit!=child)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   ClickRect rect;if(!ScreenToClient(window,ref point)||!GetClientRect(window,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom||point.x>32767||point.y>32767)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   IntPtr position=new IntPtr((point.y<<16)|point.x);
+   if(!PostMessage(window,0x203,new IntPtr(1),position))throw new Fault(409,"AUTO_CONTROL_MESSAGE_FAILED");
+   PostMessage(window,0x202,IntPtr.Zero,position);
+  }
  }
+ [StructLayout(LayoutKind.Sequential)]struct ClickPoint{public int x,y;}
+ [StructLayout(LayoutKind.Sequential)]struct ClickRect{public int left,top,right,bottom;}
+ [DllImport("user32.dll")]static extern bool ScreenToClient(IntPtr h,ref ClickPoint point);
+ [DllImport("user32.dll")]static extern bool GetClientRect(IntPtr h,out ClickRect rect);
  delegate bool Callback(IntPtr h,IntPtr p);
  [DllImport("user32.dll")] static extern bool EnumWindows(Callback callback,IntPtr p);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
@@ -222,7 +240,7 @@ class CadNative {
    int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out accessible);
    trace("AUTO_UI_LIST_OBJECT HRESULT=0x"+hr.ToString("X8"));
    if(hr!=0||accessible==null)throw new Fault(409,"AUTO_LIST_NOT_ACCESSIBLE");
-   CadListChoice.Run(new ListReader(accessible),filename,guard,trace);
+   CadListChoice.Run(new ListReader(accessible,list,filename),filename,guard,trace);
   }catch(Fault){throw;}catch(Exception e){trace(CadListChoice.FailureDetail("list-object",e));throw new Fault(409,"AUTO_LIST_READ_FAILED");
   }finally{if(accessible!=null&&Marshal.IsComObject(accessible))Marshal.ReleaseComObject(accessible);}
  }
@@ -247,7 +265,7 @@ class CadNative {
     if(completed())throw new Fault(409,"AUTO_ALREADY_ISSUED_CHECK_STATUS");
     },trace);break;
    }catch(Fault e){
-    if(e.Message!="AUTO_ITEM_NOT_VISIBLE"||attempt!=0)throw;
+    if((e.Message!="AUTO_ITEM_NOT_VISIBLE"&&e.Message!="AUTO_ITEM_NOT_CLICKABLE")||attempt!=0)throw;
     // No default action has been called: safely rebuild only this verified BAT picker.
     trace("AUTO_UI_REOPEN_PICKER_BEFORE_ACTION");
     if(FileList(main)!=list)throw new Fault(409,"AUTO_FILE_DIALOG_CHANGED");
