@@ -1,0 +1,25 @@
+name: JW_CAD Windows fixture
+on:
+  push:
+    branches: [qa-windows]
+permissions:
+  contents: read
+concurrency:
+  group: jww-windows-fixture
+  cancel-in-progress: true
+jobs:
+  fixture:
+    runs-on: windows-2022
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Run isolated Windows and JW_CAD check
+        shell: cmd
+        run: python qa\run.py
+      - name: Save synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jww-windows-fixture
+          path: qa-out
+          retention-days: 7
