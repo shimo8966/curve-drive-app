@@ -1,4 +1,4 @@
-import os, subprocess, urllib.request, hashlib, shutil, sys, time
+import os, subprocess, urllib.request, hashlib, shutil, sys, time, socket
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
@@ -10,15 +10,19 @@ installer = scratch / 'jww.exe'
 release = sys.argv[1] if len(sys.argv)>1 else '825a'
 versions = {'825a':('jww825a.exe','47632125be65d95c0a3722521dfa892cab2ecadd043194494e2e6feb12c87d78'), '10038':('jww10038.exe','8aacc55c4d63775c351c955709c30716d3efb0e0038e720d6a0808153670c370')}
 name, digest = versions[release]
-url = 'https://www.jwcad.net/download/' + name
-for attempt in range(3):
-    try:
-        request = urllib.request.Request(url, headers={'User-Agent':'CurveDrive-CI'})
-        with urllib.request.urlopen(request, timeout=25) as response: installer.write_bytes(response.read())
-        break
-    except OSError:
-        if attempt == 2: raise
-        time.sleep(2)
+urls = ['https://www.jwcad.net/download/' + name, 'http://www.jwcad.net/download/' + name, 'https://jwcad.net/download/' + name]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+last_error = None
+if not installer.exists() or hashlib.sha256(installer.read_bytes()).hexdigest()!=digest:
+    for url in urls:
+        try:
+            request = urllib.request.Request(url, headers={'User-Agent':'CurveDrive-CI'})
+            with opener.open(request, timeout=20) as response: installer.write_bytes(response.read())
+            if hashlib.sha256(installer.read_bytes()).hexdigest()==digest: break
+        except OSError as error:
+            last_error = error
+            print('Official download temporarily unavailable:',type(error).__name__,flush=True)
+    else: raise RuntimeError('Cannot download the pinned official installer') from last_error
 assert hashlib.sha256(installer.read_bytes()).hexdigest() == digest, 'Official installer hash changed'
 print('Official JW_CAD '+release+' installer hash verified', flush=True)
 cad = scratch / 'jww'

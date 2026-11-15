@@ -18,6 +18,8 @@ class JwCheck {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool SetWindowText(IntPtr h,string text);
  [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
  [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
+ [DllImport("user32.dll")]static extern IntPtr GetParent(IntPtr h);
  [DllImport("oleacc.dll")]static extern int AccessibleObjectFromWindow(IntPtr h,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out IAccessible a);
  [DllImport("oleacc.dll",EntryPoint="AccessibleObjectFromWindow")]static extern int LegacyObject(IntPtr h,uint objectId,ref Guid iid,[MarshalAs(UnmanagedType.Interface)]out CadAccessible a);
  static StreamWriter log;static string output;static int pid;static IntPtr main;
@@ -31,7 +33,7 @@ class JwCheck {
  static IntPtr Open(){IntPtr list=FindList();if(list!=IntPtr.Zero)return list;uint cmd=Menu(GetMenu(main));Write("EXTERNAL command="+cmd);if(cmd==0)throw new Exception("External menu was not found");PostMessage(main,0x111,new IntPtr(cmd),IntPtr.Zero);for(int i=0;i<70;i++){Thread.Sleep(100);list=FindList();if(list!=IntPtr.Zero)return list;}throw new Exception("File list did not open");}
  static bool WaitFile(string file){for(int i=0;i<40;i++){if(File.Exists(file))return true;Thread.Sleep(100);}return false;}
  static bool SaveJww(string folder){
-  string file=Path.Combine(folder,"Work.jww");PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(700);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
+  string file=Path.Combine(folder,"Work.jww");IntPtr oldList=FindList();if(oldList!=IntPtr.Zero){PostMessage(GetParent(oldList),0x111,new IntPtr(2),IntPtr.Zero);Thread.Sleep(300);}PostMessage(main,0x111,new IntPtr(57604),IntPtr.Zero);Thread.Sleep(700);Screenshot("save-dialog");IntPtr dialog=IntPtr.Zero,edit=IntPtr.Zero;
   EnumWindows(delegate(IntPtr h,IntPtr unused){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&Kind(h)=="#32770")dialog=h;return true;},IntPtr.Zero);
   if(dialog==IntPtr.Zero){Write("SAVE no dialog");return false;}
   EnumChildWindows(dialog,delegate(IntPtr h,IntPtr unused){if(!IsWindowVisible(h))return true;var text=new StringBuilder(2048);SendMessage(h,13,new IntPtr(text.Capacity),text);Write("SAVE CONTROL id="+GetDlgCtrlID(h)+" class="+Kind(h)+" text="+text.ToString());if(Kind(h)=="Edit"&&(GetDlgCtrlID(h)==1152||text.ToString().IndexOf("Fixture",StringComparison.OrdinalIgnoreCase)>=0))edit=h;return true;},IntPtr.Zero);
@@ -45,23 +47,23 @@ class JwCheck {
   try{
    Write("OS "+Environment.OSVersion+" interactive="+Environment.UserInteractive+" bits="+(IntPtr.Size*8));
    string folder=Path.GetDirectoryName(args[0]),input=Path.Combine(folder,"Fixture.dxf"),probe=Path.Combine(folder,"ProbeIn.txt");if(!File.Exists(input))File.WriteAllText(input,Dxf(),Encoding.ASCII);
-   File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
+   File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM Read-only fixture probe\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
    cad=Process.Start(new ProcessStartInfo(args[0],"\""+input+"\""){WorkingDirectory=folder,UseShellExecute=false});pid=cad.Id;
    for(int i=0;i<150;i++){EnumWindows(delegate(IntPtr h,IntPtr p){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&GetMenu(h)!=IntPtr.Zero)main=h;return true;},IntPtr.Zero);if(main!=IntPtr.Zero)break;Thread.Sleep(100);}
    if(main==IntPtr.Zero)throw new Exception("CAD main window not found");Thread.Sleep(1800);Write("CAD title="+Title(main));Thread.Sleep(200);Screenshot("drawing");
    bool success=false;
-   foreach(string mode in new[]{"standard","legacy","enter"}){
-    if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
+   foreach(string mode in new[]{"standard","legacy","enter","minimized"}){
+    if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
     int match=0;for(int i=1;i<=a.accChildCount;i++){try{string name=a.get_accName(i);Write("ITEM "+i+" name="+name+" role="+a.get_accRole(i)+" state="+a.get_accState(i)+" action="+a.get_accDefaultAction(i));if(name=="Probe_Run.bat"||name=="Probe_Run")match=i;}catch(Exception e){Write("ITEM "+i+" "+Error(e));}}
     if(match==0)throw new Exception("Synthetic probe macro is not in the current file list");
     try{
-     if(mode=="standard")a.accDoDefaultAction(match);
+     if(mode=="standard"||mode=="minimized")a.accDoDefaultAction(match);
      else if(mode=="legacy"){CadAccessible old=null;int oldHr=LegacyObject(list,unchecked((uint)-4),ref iid,out old);Write("LEGACY hr=0x"+oldHr.ToString("X8"));try{old.Invoke(match);}finally{if(old!=null)Marshal.ReleaseComObject(old);}}
      else {a.accSelect(3,match);SetForegroundWindow(main);PostMessage(list,0x100,new IntPtr(13),IntPtr.Zero);PostMessage(list,0x101,new IntPtr(13),IntPtr.Zero);}
      Write("ACTION returned mode="+mode);
     }catch(Exception e){Write("ACTION error mode="+mode+" "+Error(e));}
     finally{Marshal.ReleaseComObject(a);}
-    bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);
+    bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
    Write("SAVE_JWW "+SaveJww(folder));Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}

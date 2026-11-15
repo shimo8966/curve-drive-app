@@ -17,6 +17,10 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/curve-ci/jww.exe
+          key: official-jww-${{ matrix.release }}-v1
       - name: Run isolated Windows and JW_CAD check
         shell: cmd
         run: python qa\run.py "${{ matrix.release }}"
