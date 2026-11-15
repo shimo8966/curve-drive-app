@@ -52,7 +52,7 @@ class JwCheck {
  }
  static void Rerun(){
   IntPtr button=IntPtr.Zero;int matches=0;
-  EnumChildWindows(main,delegate(IntPtr h,IntPtr unused){if(IsWindowVisible(h)&&Kind(h)=="Button"&&Title(h).Contains("再実行")){button=h;matches++;Write("RERUN BUTTON id="+GetDlgCtrlID(h)+" title="+Title(h));}return true;},IntPtr.Zero);
+  EnumChildWindows(main,delegate(IntPtr h,IntPtr unused){if(IsWindowVisible(h)&&Kind(h)=="Button"&&(Title(h).Contains("再実行")||GetDlgCtrlID(h)==1065)){button=h;matches++;Write("RERUN BUTTON id="+GetDlgCtrlID(h)+" title="+Title(h));}return true;},IntPtr.Zero);
   if(matches!=1)throw new Exception("Exactly one visible Re-run button is required");PostMessage(button,0xF5,IntPtr.Zero,IntPtr.Zero);
  }
  static void WaitIssued(string folder,double station){for(int i=0;i<100;i++){State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));if(state.state=="issued"&&state.station==station){Thread.Sleep(350);return;}Thread.Sleep(80);}throw new Exception("Manual Re-run did not issue the expected point");}
@@ -89,6 +89,39 @@ class JwCheck {
    if(!found)throw new Exception("A planned segment is missing: "+k);plans++;
   }
   Write("NATIVE_GEOMETRY_OK planSegments="+plans+" circles="+c.circles.Count+" scale="+link.scale+" expectedPointM="+Num(point.x)+","+Num(point.y)+" planEndPaper="+Num(end.x)+","+Num(end.y));
+ }
+ static Pt CurvePoint(double station,double offset){
+  // Independent circle-centre construction: S10, L(R100)15, S8, R(R80)12, S5.
+  double x=0,y=0,heading=0,remaining=station;
+  foreach(double[] segment in new[]{new[]{10.0,0,0},new[]{15.0,100,1},new[]{8.0,0,0},new[]{12.0,80,-1},new[]{5.0,0,0}}){
+   double length=Math.Min(remaining,segment[0]),radius=segment[1],turn=segment[2];
+   if(radius==0){x+=length*Math.Cos(heading);y+=length*Math.Sin(heading);}
+   else{double cx=x-Math.Sin(heading)*radius*turn,cy=y+Math.Cos(heading)*radius*turn;double angle=heading-turn*Math.PI/2+turn*length/radius;x=cx+radius*Math.Cos(angle);y=cy+radius*Math.Sin(angle);heading+=turn*length/radius;}
+   remaining-=length;if(remaining<1e-9)break;
+  }
+  return new Pt{x=x-Math.Sin(heading)*offset,y=y+Math.Cos(heading)*offset};
+ }
+ static bool LinePresent(CadContext c,CadLink link,Pt first,Pt second){
+  first=CadContext.Paper(link,first);second=CadContext.Paper(link,second);double tolerance=.05/link.scale;
+  for(int i=0;i+1<c.ends.Count;i+=2)if(Math.Abs(c.ends[i].x-first.x)<tolerance&&Math.Abs(c.ends[i].y-first.y)<tolerance&&Math.Abs(c.ends[i+1].x-second.x)<tolerance&&Math.Abs(c.ends[i+1].y-second.y)<tolerance)return true;return false;
+ }
+ static void CurveApplication(string folder,string probe){
+  cad.Kill();cad.WaitForExit(5000);cad.Dispose();LaunchCad(Path.Combine(folder,"Curve.dxf"));Process bridge=LaunchBridge(folder);
+  try{
+   Pt baselinePoint=CurvePoint(10.5,.018);var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI curve",planKey="curve-50m",station=10.5,p=baselinePoint}));string session=(string)baseline["session"];
+   Call("auto/prepare",new{session=session,end=CurvePoint(50,0)});CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
+   Pt origin=ReadDrawing(probe).ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
+   string setup="REM Synthetic curved fixture setup\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
+   File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),setup,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Curved drawing native calibration failed");Call("auto/enable",new{});int circles=1;
+   foreach(double station in new[]{11.0,40.0,49.0}){
+    double offset=station==40?-.02:station==49?.03:.02;Pt point=CurvePoint(station,offset);State previous=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+    Call("point",new{site="CI curve",planKey="curve-50m",session=session,station=station,previousStation=previous.station,p=point,q=previous.p,offsetMm=offset*1000});Call("auto/apply",new{session=session,station=station});Thread.Sleep(350);
+    CadContext drawing=ReadDrawing(probe);drawing.Validate(link,point);circles++;if(drawing.circles.Count!=circles)throw new Exception("Curved drawing circle count differs");if(!LinePresent(drawing,link,previous.p,point))throw new Exception("Curved measured line does not connect the expected points");
+    for(int k=0;k<100;k++)if(!LinePresent(drawing,link,CurvePoint(k*.5,0),CurvePoint((k+1)*.5,0)))throw new Exception("Curved planned segment missing: "+k);
+    Write("NATIVE_CURVE_GEOMETRY_OK station="+station+" perpendicularOffsetMm="+offset*1000+" circles="+circles+" planSegments=100 expectedPointM="+Num(point.x)+","+Num(point.y));
+   }
+   File.Copy(probe,Path.Combine(output,"Curve-after.txt"),true);Write("NATIVE_CURVE_APPLICATION_OK left and right curves, independent centre-based coordinates, 0.05mm tolerance, original plan retained");
+  }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();File.Copy(Path.Combine(folder,"Import.log"),Path.Combine(output,"Curve-Import.log"),true);}
  }
  static void NativeApplication(string folder,string probe){
   Process bridge=LaunchBridge(folder);
@@ -170,7 +203,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   NativeApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   NativeApplication(folder,probe);CurveApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }

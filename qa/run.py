@@ -36,6 +36,7 @@ command = [str(csc), '/noconfig', '/nologo', '/codepage:65001', '/langversion:5'
 subprocess.run(command, check=True, timeout=30)
 subprocess.run([str(csc),'/noconfig','/nologo','/codepage:65001','/langversion:5','/target:exe','/out:'+str(exe.parent/'Bridge.exe'),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Web.Extensions.dll',*[str(exe.parent/name) for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs')]],check=True,timeout=30)
 shutil.copy2(root / 'qa/Fixture.dxf', exe.parent / 'Fixture.dxf')
+shutil.copy2(root / 'qa/Curve.dxf', exe.parent / 'Curve.dxf')
 if release == '825a':
     # The runner's English locale breaks v8's Japanese default Save-As name.
     # Use our own v700 synthetic JWW, saved by the official v10 executable.
