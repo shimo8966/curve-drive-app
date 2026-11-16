@@ -48,6 +48,14 @@ class JwCheck {
  static IntPtr Open(){IntPtr list=FindList();if(list!=IntPtr.Zero)return list;uint cmd=0;for(int n=0;n<100;n++){if(IsWindowEnabled(main)){cmd=Menu(GetMenu(main));if(cmd!=0)break;}Thread.Sleep(80);}Write("EXTERNAL command="+cmd);if(cmd==0)throw new Exception("External menu was not found after waiting for CAD to finish");PostMessage(main,0x111,new IntPtr(cmd),IntPtr.Zero);for(int i=0;i<70;i++){Thread.Sleep(100);list=FindList();if(list!=IntPtr.Zero)return list;}throw new Exception("File list did not open");}
  static bool WaitFile(string file){for(int i=0;i<40;i++){if(File.Exists(file))return true;Thread.Sleep(100);}return false;}
  static readonly JavaScriptSerializer json=new JavaScriptSerializer();
+ static T Shared<T>(string folder,string filename){
+  // The production callbacks replace these files under State.lock. The fixture
+  // must use the same lock rather than racing the callback's atomic replacement.
+  for(int attempt=0;attempt<100;attempt++)try{
+   using(var guard=new FileStream(Path.Combine(folder,"State.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)){guard.Lock(0,1);return json.Deserialize<T>(File.ReadAllText(Path.Combine(folder,filename)));}
+  }catch(IOException){Thread.Sleep(50);}
+  throw new Exception("Fixture could not read the shared state: "+filename);
+ }
  const string StraightKey="{\"cadUnits\":\"mm-real-v28-auto\",\"x0\":0,\"y0\":0,\"heading\":0,\"z0\":0,\"grade\":0,\"segs\":[{\"type\":\"S\",\"l\":50,\"r\":0}]}";
  static string Num(double value){return value.ToString("R",CultureInfo.InvariantCulture);}
  static void LaunchCad(string input){
@@ -66,7 +74,7 @@ class JwCheck {
    if(matches==1){Write("RERUN BUTTON id="+GetDlgCtrlID(button)+" title="+Title(button));PostMessage(button,0xF5,IntPtr.Zero,IntPtr.Zero);return;}Thread.Sleep(80);
   }throw new Exception("Exactly one visible Re-run button is required");
  }
- static void WaitIssued(string folder,double station){for(int i=0;i<100;i++){State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));if(state.state=="issued"&&state.station==station){Thread.Sleep(350);return;}Thread.Sleep(80);}throw new Exception("Manual Re-run did not issue the expected point");}
+ static void WaitIssued(string folder,double station){for(int i=0;i<100;i++){State state=Shared<State>(folder,"State.json");if(state.state=="issued"&&state.station==station){Thread.Sleep(350);return;}Thread.Sleep(80);}throw new Exception("Manual Re-run did not issue the expected point");}
  static string Call(string path,object body){
   var request=(HttpWebRequest)WebRequest.Create("http://127.0.0.1:18718/"+path);request.Proxy=null;request.Timeout=45000;request.ContentType="text/plain;charset=utf-8";request.Headers["Origin"]="http://127.0.0.1:18718";
   if(body!=null){request.Method="POST";byte[] bytes=Encoding.UTF8.GetBytes(json.Serialize(body));request.ContentLength=bytes.Length;using(var stream=request.GetRequestStream())stream.Write(bytes,0,bytes.Length);}
@@ -120,12 +128,12 @@ class JwCheck {
   cad.Kill();cad.WaitForExit(5000);cad.Dispose();LaunchCad(Path.Combine(folder,"Curve.dxf"));Process bridge=LaunchBridge(folder);
   try{
    Pt baselinePoint=CurvePoint(10.5,.018);var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI curve",planKey="curve-50m",station=10.5,p=baselinePoint}));string session=(string)baseline["session"];
-   Call("auto/prepare",new{session=session,end=CurvePoint(50,0)});CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
+   Call("auto/prepare",new{session=session,end=CurvePoint(50,0)});CadLink link=Shared<CadLink>(folder,"Auto.json");
    Pt origin=ReadDrawing(probe).ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
    string setup="REM Synthetic curved fixture setup\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
-   File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),setup,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Curved drawing native calibration failed");Call("auto/enable",new{});int circles=1;
+   File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),setup,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});link=Shared<CadLink>(folder,"Auto.json");if(!link.calibrated)throw new Exception("Curved drawing native calibration failed");Call("auto/enable",new{});int circles=1;
    foreach(double station in new[]{11.0,40.0,49.0}){
-    double offset=station==40?-.02:station==49?.03:.02;Pt point=CurvePoint(station,offset);State previous=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+    double offset=station==40?-.02:station==49?.03:.02;Pt point=CurvePoint(station,offset);State previous=Shared<State>(folder,"State.json");
     Call("point",new{site="CI curve",planKey="curve-50m",session=session,station=station,previousStation=previous.station,p=point,q=previous.p,offsetMm=offset*1000});Call("auto/apply",new{session=session,station=station});Thread.Sleep(350);
     CadContext drawing=ReadDrawing(probe);drawing.Validate(link,point);circles++;if(drawing.circles.Count!=circles)throw new Exception("Curved drawing circle count differs");if(!LinePresent(drawing,link,previous.p,point))throw new Exception("Curved measured line does not connect the expected points");
     for(int k=0;k<100;k++)if(!LinePresent(drawing,link,CurvePoint(k*.5,0),CurvePoint((k+1)*.5,0)))throw new Exception("Curved planned segment missing: "+k);
@@ -135,7 +143,7 @@ class JwCheck {
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();File.Copy(Path.Combine(folder,"Import.log"),Path.Combine(output,"Curve-Import.log"),true);}
  }
  static CadLink CalibrateGuide(string folder,string probe){
-   CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
+   CadLink link=Shared<CadLink>(folder,"Auto.json");
    CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string captured=Path.Combine(folder,"AutoInput.txt");if(File.Exists(captured))File.Delete(captured);
    // Physical mouse input is restricted to this synthetic CI actor. The delivered
    // application continues to use only verified, control-directed activation.
@@ -165,7 +173,7 @@ class JwCheck {
    File.Copy(captured,Path.Combine(output,"Setup-ActualInput.txt"),true);CadContext picked=CadContext.Parse(File.ReadAllText(captured,Encoding.GetEncoding(932)));
    if(picked.picked==null||Math.Abs(picked.picked.x-origin.x)>.05/input.scales[0]||Math.Abs(picked.picked.y-origin.y)>.05/input.scales[0])throw new Exception("The actual right click did not read the synthetic plan origin");
    Thread.Sleep(1000);Screenshot("setup-after-point");
-   link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
+   link=Shared<CadLink>(folder,"Auto.json");if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
    Write("NATIVE_CALIBRATED pid="+link.pid+" actualCAD="+pid+" scale="+link.scale);if(link.pid!=pid)throw new Exception("Calibration bound another process");
    return link;
  }
@@ -180,7 +188,7 @@ class JwCheck {
     using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeManaged.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
      if(!edge.WaitForExit(120000)){edge.Kill();throw new Exception("Input-only managed flow timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Input-only managed flow failed: "+error);
     }
-    link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+    link=Shared<CadLink>(folder,"Auto.json");State state=Shared<State>(folder,"State.json");
     CadContext context=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));
     if(mode=="curve"||mode=="cold"){
      Func<Pt,Pt> rotate=delegate(Pt p){double angle=Math.PI/6;return new Pt{x=p.x*Math.Cos(angle)-p.y*Math.Sin(angle),y=p.x*Math.Sin(angle)+p.y*Math.Cos(angle)};};Pt expected=rotate(CurvePoint(cold?49:40,cold?.03:-.02));
@@ -209,10 +217,10 @@ class JwCheck {
   cad.Kill();cad.WaitForExit(5000);cad.Dispose();LaunchCad(original);
  }
  static void GuidedResume(string folder,string probe){
-  CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));string drawing=link.drawing;DateTime before=File.GetLastWriteTimeUtc(drawing);PostMessage(main,0x111,new IntPtr(57603),IntPtr.Zero);
+  CadLink link=Shared<CadLink>(folder,"Auto.json");string drawing=link.drawing;DateTime before=File.GetLastWriteTimeUtc(drawing);PostMessage(main,0x111,new IntPtr(57603),IntPtr.Zero);
   for(int i=0;i<60&&File.GetLastWriteTimeUtc(drawing)<=before;i++)Thread.Sleep(100);if(File.GetLastWriteTimeUtc(drawing)<=before)throw new Exception("Guide resume fixture was not saved");cad.Kill();cad.WaitForExit(5000);cad.Dispose();LaunchCad(drawing);
   Process bridge=LaunchBridge(folder),edge=null;string marker=Path.Combine(folder,"ResumeReady.tag");if(File.Exists(marker))File.Delete(marker);
-  try{edge=StartGuide(folder,"resume");GuideWait(edge,marker);Activate("Field_Run.bat",delegate(){var current=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));return current.fieldReady&&current.pid==pid;});GuideFinish(edge);link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));CheckDrawing(ReadDrawing(probe),link,new Pt{x=12,y=-.01},5);Write("NATIVE_GUIDED_RESUME_GEOMETRY_OK");}
+  try{edge=StartGuide(folder,"resume");GuideWait(edge,marker);Activate("Field_Run.bat",delegate(){var current=Shared<CadLink>(folder,"Auto.json");return current.fieldReady&&current.pid==pid;});GuideFinish(edge);link=Shared<CadLink>(folder,"Auto.json");CheckDrawing(ReadDrawing(probe),link,new Pt{x=12,y=-.01},5);Write("NATIVE_GUIDED_RESUME_GEOMETRY_OK");}
   finally{if(edge!=null){if(!edge.HasExited)edge.Kill();edge.Dispose();}if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();}
  }
  static void NativeApplication(string folder,string probe){
@@ -220,15 +228,15 @@ class JwCheck {
   try{
    for(int i=0;i<60;i++){try{Call("health",null);break;}catch(WebException){Thread.Sleep(100);}}
    var baseline=json.Deserialize<Dictionary<string,object>>(Call("baseline",new{site="CI fixture",planKey=StraightKey,station=10,p=new{x=10,y=0}}));string session=(string)baseline["session"];
-   Call("auto/prepare",new{session=session,end=new{x=50,y=0}});CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
+   Call("auto/prepare",new{session=session,end=new{x=50,y=0}});CadLink link=Shared<CadLink>(folder,"Auto.json");
    CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
    string text="REM Fixture setup - known picked point from real CAD geometry\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
    File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),text,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});
-   link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
+   link=Shared<CadLink>(folder,"Auto.json");if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
    Write("NATIVE_CALIBRATED pid="+link.pid+" actualCAD="+pid+" scale="+link.scale);if(link.pid!=pid)throw new Exception("Calibration bound another process");
    Call("auto/enable",new{});
    foreach(double station in new[]{10.5,11}){
-    double offset=station==10.5?.02:-.02;State previous=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+    double offset=station==10.5?.02:-.02;State previous=Shared<State>(folder,"State.json");
     if(station==10.5){
      using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeCheck.py")+"\" 10.5 20"){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
       if(!edge.WaitForExit(60000)){edge.Kill();throw new Exception("Edge Enter test timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Edge Enter failed: "+error);
@@ -247,11 +255,11 @@ class JwCheck {
    for(int i=0;i<60&&File.GetLastWriteTimeUtc(drawing)<=beforeSave;i++)Thread.Sleep(100);
    if(File.GetLastWriteTimeUtc(drawing)<=beforeSave)throw new Exception("Updated synthetic JWW was not saved");
    bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();cad.Kill();cad.WaitForExit(5000);cad.Dispose();
-   LaunchCad(drawing);bridge=LaunchBridge(folder);State resumed=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+   LaunchCad(drawing);bridge=LaunchBridge(folder);State resumed=Shared<State>(folder,"State.json");
    if(resumed.session!=session||resumed.station!=11||resumed.state!="issued")throw new Exception("Restart changed the saved measurement session");
    Call("field/start",new{site="CI fixture",planKey=StraightKey,session=session});
-   Activate("Field_Run.bat",delegate(){CadLink current=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));return current.fieldReady&&current.pid==pid;});
-   link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));Write("NATIVE_RESTART_READY pid="+pid+" station="+resumed.station);
+   Activate("Field_Run.bat",delegate(){CadLink current=Shared<CadLink>(folder,"Auto.json");return current.fieldReady&&current.pid==pid;});
+   link=Shared<CadLink>(folder,"Auto.json");Write("NATIVE_RESTART_READY pid="+pid+" station="+resumed.station);
    Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=11.5,previousStation=11,p=new{x=11.5,y=.03},q=new{x=11,y=-.02},offsetMm=30});
    Rerun();WaitIssued(folder,11.5);Thread.Sleep(500);CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
    DateTime beforeDuplicate=File.GetLastWriteTimeUtc(Path.Combine(folder,"Auto.json"));Activate("Field_Run.bat",delegate(){return File.GetLastWriteTimeUtc(Path.Combine(folder,"Auto.json"))>beforeDuplicate;});CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
