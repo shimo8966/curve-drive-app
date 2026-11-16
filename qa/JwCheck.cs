@@ -24,6 +24,11 @@ class JwCheck {
  [DllImport("user32.dll")]static extern bool GetWindowRect(IntPtr h,out Rect rect);
  [DllImport("user32.dll")]static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")]static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
+ [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")]static extern IntPtr WindowFromPoint(Point point);
+ [DllImport("user32.dll")]static extern bool BringWindowToTop(IntPtr h);
+ [DllImport("user32.dll")]static extern bool AttachThreadInput(uint source,uint target,bool attach);
+ [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
  [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
  [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
@@ -134,20 +139,26 @@ class JwCheck {
    CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string captured=Path.Combine(folder,"AutoInput.txt");if(File.Exists(captured))File.Delete(captured);
    // Physical mouse input is restricted to this synthetic CI actor. The delivered
    // application continues to use only verified, control-directed activation.
-   ShowWindow(main,3);SetForegroundWindow(main);Thread.Sleep(500);Rect bounds;GetWindowRect(main,out bounds);
+   Activate("Setup_Link.bat",delegate(){return FindList()==IntPtr.Zero;});
+   uint unused;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out unused),actorThread=GetCurrentThreadId();
+   bool attached=foregroundThread!=actorThread&&AttachThreadInput(actorThread,foregroundThread,true);
+   try{ShowWindow(main,3);BringWindowToTop(main);SetForegroundWindow(main);}finally{if(attached)AttachThreadInput(actorThread,foregroundThread,false);}
+   Thread.Sleep(500);Rect bounds;GetWindowRect(main,out bounds);
    int cx=(bounds.left+bounds.right)/2,cy=(bounds.top+bounds.bottom)/2;
+   IntPtr canvas=WindowFromPoint(new Point{x=cx,y=cy});uint owner;GetWindowThreadProcessId(canvas,out owner);if(owner!=(uint)pid)throw new Exception("The synthetic CAD canvas is obscured; refusing physical input");
    SetCursorPos(cx,cy);mouse_event(2|8,0,0,0,UIntPtr.Zero);Thread.Sleep(100);SetCursorPos(cx+80,cy-80);Thread.Sleep(150);mouse_event(4|16,0,0,0,UIntPtr.Zero);Thread.Sleep(500);Screenshot("setup-full-view");
-   Activate("Setup_Link.bat",delegate(){return FindList()==IntPtr.Zero;});SetForegroundWindow(main);Thread.Sleep(400);Screenshot("setup-awaiting-point");
+   Thread.Sleep(400);Screenshot("setup-awaiting-point");GetWindowRect(canvas,out bounds);Write("SYNTHETIC_CANVAS "+Kind(canvas)+" bounds="+bounds.left+","+bounds.top+","+bounds.right+","+bounds.bottom);
    if(File.Exists(captured)){File.Copy(captured,Path.Combine(output,"Setup-ActualInput.txt"),true);throw new Exception("The delivered setup macro ran before an origin was picked: "+File.ReadAllText(Path.Combine(folder,"Auto.json")));}
    int best=0,px=-1,py=-1;var screen=Screen.PrimaryScreen.Bounds;
    using(var bitmap=new Bitmap(screen.Width,screen.Height)){
     using(var g=Graphics.FromImage(bitmap))g.CopyFromScreen(screen.Left,screen.Top,0,0,screen.Size);
-    for(int y=Math.Max(130,bounds.top+110);y<Math.Min(screen.Height-70,bounds.bottom-40);y++){
-     int count=0,left=-1;for(int x=Math.Max(110,bounds.left+100);x<Math.Min(screen.Width-110,bounds.right-110);x++){Color color=bitmap.GetPixel(x,y);if(color.R>180&&color.G<100&&color.B<100){count++;if(left<0)left=x;}}
+    for(int y=Math.Max(0,bounds.top+1);y<Math.Min(screen.Height,bounds.bottom-1);y++){
+     int count=0,left=-1;for(int x=Math.Max(0,bounds.left+1);x<Math.Min(screen.Width,bounds.right-1);x++){Color color=bitmap.GetPixel(x,y);if(color.R>180&&color.G<100){count++;if(left<0)left=x;}}
      if(count>best){best=count;px=left;py=y;}
     }
    }
-   if(best<100||px<bounds.left+115)throw new Exception("Synthetic plan origin is not fully visible: redPixels="+best+" left="+px);
+   if(best<100||px<=bounds.left+1)throw new Exception("Synthetic plan origin is not fully visible: redPixels="+best+" left="+px);
+   GetWindowThreadProcessId(WindowFromPoint(new Point{x=px,y=py}),out owner);if(owner!=(uint)pid)throw new Exception("The synthetic origin is obscured; refusing physical input");
    Write("NATIVE_SETUP_RIGHT_CLICK x="+px+" y="+py+" redPixels="+best);SetCursorPos(px,py);mouse_event(8,0,0,0,UIntPtr.Zero);Thread.Sleep(100);mouse_event(16,0,0,0,UIntPtr.Zero);SetCursorPos(px+30,py-30);
    for(int i=0;i<100&&!File.Exists(captured);i++)Thread.Sleep(100);
    if(!File.Exists(captured))throw new Exception("The real setup macro did not receive the right-clicked origin");
