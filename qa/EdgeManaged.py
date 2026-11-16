@@ -23,8 +23,8 @@ with sync_playwright() as p:
     try:
         page.wait_for_function('document.querySelector("#guideTitle").textContent.includes("準備できました")',timeout=70000)
     except Exception:
-        print(page.locator('#guideNotice').inner_text(),flush=True)
-        page.screenshot(path=str(folder.parent/'Managed-failure.png'))
+        print(ascii(page.locator('#guideNotice').inner_text()),flush=True)
+        page.screenshot(path=str(folder/'Managed-failure.png'))
         raise
     page.locator('#guidePrimary').click()
     row=1 if mode=='new' else 2

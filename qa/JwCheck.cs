@@ -186,7 +186,7 @@ class JwCheck {
     using(var owned=Process.GetProcessById(link.pid)){owned.Kill();owned.WaitForExit(5000);}
    }
   }finally{
-   foreach(string name in new[]{"Import.log","Auto.json","State.json","AutoInput.txt","Project.json"})if(File.Exists(Path.Combine(folder,name)))File.Copy(Path.Combine(folder,name),Path.Combine(output,"Managed-"+name),true);
+   foreach(string name in new[]{"Import.log","Auto.json","State.json","AutoInput.txt","Project.json","Managed-failure.png"})if(File.Exists(Path.Combine(folder,name)))File.Copy(Path.Combine(folder,name),Path.Combine(output,"Managed-"+name),true);
    if(link!=null)try{using(var owned=Process.GetProcessById(link.pid))owned.Kill();}catch{}
    if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();
   }

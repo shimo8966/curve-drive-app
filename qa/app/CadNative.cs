@@ -33,8 +33,11 @@ interface CadAccessible {
 }
 
 partial class CadNative {
- [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool SetWindowText(IntPtr h,string text);
- public static bool ManagedPath(CadLink a){return a!=null&&a.managed&&!String.IsNullOrEmpty(a.drawing)&&Path.GetFullPath(a.drawing).StartsWith(Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Work"))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);}
+ [DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
+ public static bool ManagedPath(CadLink a){
+  Guid session;if(a==null||!a.managed||String.IsNullOrEmpty(a.drawing)||!Guid.TryParseExact(a.session,"N",out session))return false;
+  string expected=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Work",a.session,"Plan_"+a.session.Substring(0,12)+".dxf");return String.Equals(Path.GetFullPath(a.drawing),Path.GetFullPath(expected),StringComparison.OrdinalIgnoreCase);
+ }
  static bool CadExecutable(string path){return !String.IsNullOrEmpty(path)&&String.Equals(Path.GetFileName(path),"Jw_win.exe",StringComparison.OrdinalIgnoreCase)&&File.Exists(path);}
  static string CadExe(){
   string cache=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"CadPath.txt"),found=null;
@@ -52,14 +55,37 @@ partial class CadNative {
   }throw new Fault(409,"MANAGED_JWCAD_LAUNCH_FAILED");
  }
  static void ManagedFolder(IntPtr list,Action<string> trace){
-  IntPtr dialog=GetAncestor(list,2),edit=GetDlgItem(dialog,1487);var kind=new StringBuilder(100);GetClassName(edit,kind,kind.Capacity);
-  string folder=AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-  if(edit==IntPtr.Zero||kind.ToString()!="Edit")throw new Fault(409,"MANAGED_FOLDER_CONTROL_NOT_FOUND");
-  if(String.Equals(Title(edit).TrimEnd(Path.DirectorySeparatorChar),folder,StringComparison.OrdinalIgnoreCase))return;
-  if(!SetWindowText(edit,folder)||!String.Equals(Title(edit),folder,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");
-  // Notify only the verified directory control. Never press a global key or
-  // activate whichever file happens to be selected in the chooser.
-  trace("MANAGED_FOLDER_CHANGE");PostMessage(dialog,0x111,new IntPtr(1487|(0x200<<16)),edit);Thread.Sleep(300);
+  IntPtr dialog=GetAncestor(list,2),tree=GetDlgItem(dialog,1775);var kind=new StringBuilder(100);GetClassName(tree,kind,kind.Capacity);
+  string folder=Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar),drive=Path.GetPathRoot(folder).TrimEnd(Path.DirectorySeparatorChar);
+  if(tree==IntPtr.Zero||kind.ToString()!="SysTreeView32"||!IsWindowVisible(tree))throw new Fault(409,"MANAGED_FOLDER_CONTROL_NOT_FOUND");
+  Guid iid=typeof(CadAccessible).GUID;CadAccessible accessible=null;
+  try{
+   int hr=AccessibleObjectFromWindow(tree,unchecked((uint)-4),ref iid,out accessible);if(hr!=0||accessible==null)throw new Fault(409,"MANAGED_FOLDER_CONTROL_NOT_FOUND");
+   IntPtr root=SendMessage(tree,0x110A,IntPtr.Zero,IntPtr.Zero),item=TreeDrive(tree,accessible,root,drive,0);
+   if(item==IntPtr.Zero)throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");
+   string tail=folder.Substring(Path.GetPathRoot(folder).Length);foreach(string part in tail.Split(new char[]{Path.DirectorySeparatorChar},StringSplitOptions.RemoveEmptyEntries)){
+    SendMessage(tree,0x1102,new IntPtr(2),item);IntPtr child=IntPtr.Zero;
+    for(int attempt=0;attempt<20;attempt++){child=TreeSibling(tree,accessible,SendMessage(tree,0x110A,new IntPtr(4),item),part);if(child!=IntPtr.Zero)break;Thread.Sleep(50);}
+    if(child==IntPtr.Zero)throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");item=child;
+   }
+   trace("MANAGED_FOLDER_SELECT");SendMessage(tree,0x110B,new IntPtr(9),item);
+   if(SendMessage(tree,0x110A,new IntPtr(9),IntPtr.Zero)!=item)throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");Thread.Sleep(200);
+  }finally{if(accessible!=null&&Marshal.IsComObject(accessible))Marshal.ReleaseComObject(accessible);}
+ }
+ static string TreeName(IntPtr tree,CadAccessible accessible,IntPtr item){
+  IntPtr id=SendMessage(tree,0x112B,item,IntPtr.Zero);if(id==IntPtr.Zero)return "";
+  try{return accessible.Name(id.ToInt32())??"";}catch{return "";}
+ }
+ static IntPtr TreeSibling(IntPtr tree,CadAccessible accessible,IntPtr first,string name){
+  IntPtr found=IntPtr.Zero;int matches=0,count=0;
+  for(IntPtr item=first;item!=IntPtr.Zero&&count++<5000;item=SendMessage(tree,0x110A,new IntPtr(1),item))if(String.Equals(TreeName(tree,accessible,item).TrimEnd(Path.DirectorySeparatorChar),name,StringComparison.OrdinalIgnoreCase)){found=item;matches++;}
+  return matches==1?found:IntPtr.Zero;
+ }
+ static IntPtr TreeDrive(IntPtr tree,CadAccessible accessible,IntPtr first,string drive,int depth){
+  IntPtr found=TreeSibling(tree,accessible,first,drive);if(found!=IntPtr.Zero||depth>=2)return found;int count=0;
+  for(IntPtr item=first;item!=IntPtr.Zero&&count++<100;item=SendMessage(tree,0x110A,new IntPtr(1),item)){
+   SendMessage(tree,0x1102,new IntPtr(2),item);found=TreeDrive(tree,accessible,SendMessage(tree,0x110A,new IntPtr(4),item),drive,depth+1);if(found!=IntPtr.Zero)return found;
+  }return IntPtr.Zero;
  }
 }
 class CadWindow {public IntPtr handle;public int pid;public long started;}

@@ -38,6 +38,7 @@ partial class Program {
   try{a=Json.Deserialize<CadLink>(File.ReadAllText(AutoPath,Utf8));}catch{throw new Fault(409,"AUTO_CONFIG_INVALID");}
   Guid id;
   if(a==null||a.schema!=1||!Guid.TryParseExact(a.token,"N",out id)||!ValidPoint(a.end))throw new Fault(409,"AUTO_CONFIG_INVALID");
+  if(a.managed&&!CadNative.ManagedPath(a))throw new Fault(409,"AUTO_CONFIG_INVALID");
   if(a.session!=s.session)return null;
   if(a.fieldMode&&a.enabled)throw new Fault(409,"AUTO_CONFIG_INVALID");
   if(a.calibrated&&(a.pid<=0||a.started<=0||String.IsNullOrEmpty(a.drawing)||a.group!=0||!ValidNumber(a.scale,1e6)||a.scale<=0||!ValidNumber(a.x,1e12)||!ValidNumber(a.y,1e12)||!ValidNumber(a.width,1e7)||!ValidNumber(a.height,1e7)||a.width<=0||a.height<=0))throw new Fault(409,"AUTO_CONFIG_INVALID");
@@ -206,7 +207,7 @@ partial class Program {
   ManagedWrite(Path.Combine(folder,"Latest.dxf"),drawing);ManagedWrite(Path.Combine(folder,"Project.json"),project);
   ManagedWrite(Path.Combine(Root,"Project.json"),project);
  }
- static bool ManagedVerified(State s){CadLink a=AutoLoad(s);return a!=null&&a.managed&&a.verifiedStation.HasValue&&Near(a.verifiedStation.Value,s.station);}
+ static bool ManagedVerified(State s){CadLink a=AutoLoad(s);return a!=null&&a.managed&&a.enabled&&a.calibrated&&s.state!="pending"&&a.verifiedStation.HasValue&&Near(a.verifiedStation.Value,s.station);}
  static void ManagedCheck(CadLink a,State expected){
   string nonce=Guid.NewGuid().ToString("N");
   using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(s==null||s.session!=expected.session||!Near(s.station,expected.station)||current==null||!current.enabled)throw new Fault(409,"AUTO_STOPPED_CHECK_STATUS");current.checkNonce=nonce;AutoSave(current);}
@@ -231,7 +232,7 @@ partial class Program {
   }
   if(method!="POST"||(path!="/managed/start"&&path!="/managed/point"))return false;
   string origin=ctx.Request.Headers["Origin"];if(origin!="http://127.0.0.1:18718"&&origin!="http://localhost:18718")throw new Fault(403,"AUTO_USE_LOCAL_PAGE");
-  var d=Body(ctx,8388608);if(path=="/managed/point"){Receive(ctx,d);return true;}
+  var d=Body(ctx,8388608);if(path=="/managed/point"){using(Lock()){State current=Load();CadLink link=AutoLoad(current);if(link==null||!link.managed)throw new Fault(409,"MANAGED_WORK_REQUIRED");}Receive(ctx,d);return true;}
   if(Environment.OSVersion.Platform!=PlatformID.Win32NT)throw new Fault(501,"AUTO_WINDOWS_ONLY");
   string requestId=Text(Field(d,"requestId"),32);Guid requestGuid;if(!Guid.TryParseExact(requestId,"N",out requestGuid))throw new Fault(400,"MANAGED_REQUEST_INVALID");
   string site=Text(Field(d,"site"),120),plan=Text(Field(d,"planKey"),16000),project=Json.Serialize(Map(Field(d,"project")));double station=Station(Field(d,"station"));Pt point=Point(Field(d,"p")),end=Point(Field(d,"end"));
