@@ -16,6 +16,7 @@ class JwCheck {
  [DllImport("user32.dll")]static extern bool EnumChildWindows(IntPtr h,EnumProc f,IntPtr p);
  [DllImport("user32.dll")]static extern int GetDlgCtrlID(IntPtr h);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern IntPtr SendMessage(IntPtr h,uint m,IntPtr w,StringBuilder text);
+ [DllImport("user32.dll",EntryPoint="SendMessageW")]static extern IntPtr SendPointer(IntPtr h,uint m,IntPtr w,IntPtr value);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool SetWindowText(IntPtr h,string text);
  [StructLayout(LayoutKind.Sequential)]struct Point{public int x,y;}
  [StructLayout(LayoutKind.Sequential)]struct Rect{public int left,top,right,bottom;}
@@ -89,16 +90,38 @@ class JwCheck {
     if(attempt!=0)throw new Exception("Fixture file list is still not visible");Marshal.ReleaseComObject(a);a=null;PostMessage(dialog,0x111,new IntPtr(2),IntPtr.Zero);
     for(int i=0;i<40&&FindList()!=IntPtr.Zero;i++)Thread.Sleep(50);Activate(filename,done,attempt+1);return;
    }
-   a.accSelect(2,match);Write("ACTIVATE selectedState="+a.get_accState(match));
+   a.accSelect(3,match);Write("ACTIVATE selectedState="+a.get_accState(match));
    if(((int)a.get_accState(match)&2)==0)throw new Exception("Selection not confirmed");
    int left,top,width,height;a.accLocation(out left,out top,out width,out height,match);var point=new Point{x=left+Math.Min(20,width/2),y=top+height/2};Write("ACTIVATE bounds="+left+","+top+","+width+","+height);
    object hit=a.accHitTest(point.x,point.y);if(!(hit is int)||(int)hit!=match)throw new Exception("Hit-test disagrees with exact filename");Rect rect;
    if(!ScreenToClient(list,ref point)||!GetClientRect(list,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom)throw new Exception("Item is outside the list client area");
-   IntPtr position=new IntPtr((point.y<<16)|point.x);if(!PostMessage(list,0x203,new IntPtr(1),position))throw new Exception("Cannot post control click");PostMessage(list,0x202,IntPtr.Zero,position);
+   IntPtr position=new IntPtr((point.y<<16)|point.x);SendPointer(list,0x201,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);SendPointer(list,0x203,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);
   }finally{if(a!=null)Marshal.ReleaseComObject(a);}
   for(int i=0;i<100;i++){if(done()){Thread.Sleep(250);for(int n=0;n<60&&!IsWindowEnabled(main);n++)Thread.Sleep(50);return;}Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
  }
  static CadContext ReadDrawing(string probe){if(File.Exists(probe))File.Delete(probe);Activate("Probe_Run.bat",delegate(){return File.Exists(probe);});return CadContext.Parse(File.ReadAllText(probe,Encoding.GetEncoding(932)));}
+ static IntPtr FocusStaleMacro(string filename){
+  IntPtr list=Open(),dialog=GetAncestor(list,2);ShowWindow(dialog,9);SetForegroundWindow(dialog);Thread.Sleep(200);
+  Guid iid=typeof(IAccessible).GUID;IAccessible a=null;
+  try{
+   if(AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a)!=0||a==null)throw new Exception("Stale-focus fixture cannot read the macro list");
+   int match=0,hits=0;for(int i=1;i<=a.accChildCount;i++){string name;try{name=a.get_accName(i);}catch(ArgumentException){continue;}if(String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)){match=i;hits++;}}
+   if(hits!=1)throw new Exception("Stale-focus fixture requires one exact stale file");
+   int left,top,width,height;a.accLocation(out left,out top,out width,out height,match);var p=new Point{x=left+Math.Min(20,width/2),y=top+height/2};object hit=a.accHitTest(p.x,p.y);
+   if(!(hit is int)||(int)hit!=match||!ScreenToClient(list,ref p))throw new Exception("Stale-focus fixture hit-test differs");
+   Rect bounds;if(!GetClientRect(list,out bounds)||p.x<0||p.y<0||p.x>=bounds.right||p.y>=bounds.bottom)throw new Exception("Stale-focus fixture file is outside the list");
+   // A genuine first click updates Jw_cad's selection/cached filename without
+   // invoking a BAT. The following production action must replace this focus.
+   SendPointer(dialog,0x28,list,new IntPtr(1));IntPtr position=new IntPtr((p.y<<16)|p.x);
+   SendPointer(list,0x201,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);Thread.Sleep(150);
+   int focused=SendPointer(list,0x100C,new IntPtr(-1),new IntPtr(1)).ToInt32();
+   if(((int)a.get_accState(match)&2)==0||focused!=match-1)throw new Exception("Stale file is not the native list's focused and selected item");
+   Write("NATIVE_STALE_FILE_FOCUSED file="+filename+" child="+match+" focusedIndex="+focused+" state="+a.get_accState(match));return list;
+  }finally{if(a!=null)Marshal.ReleaseComObject(a);}
+ }
+ static bool SharedLogContains(string filename,string text){
+  try{using(var stream=new FileStream(filename,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))using(var reader=new StreamReader(stream))return reader.ReadToEnd().Contains(text);}catch(IOException){return false;}
+ }
  static void CheckDrawing(CadContext c,CadLink link,Pt point,int expectedCircles){
   c.Validate(link,point);if(c.circles.Count!=expectedCircles)throw new Exception("Unexpected circle count: "+c.circles.Count);
   Pt end=CadContext.Paper(link,new Pt{x=50,y=0});int plans=0;
@@ -178,6 +201,50 @@ class JwCheck {
    return link;
  }
  static Process StartGuide(string folder,string mode){return Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeGuide.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true});}
+ static void PlanApplication(string source){
+  string folder=Path.Combine(source,"Plan Only");Directory.CreateDirectory(folder);foreach(string name in new[]{"Bridge.exe","app.html","EdgePlan.py"})File.Copy(Path.Combine(source,name),Path.Combine(folder,name),true);
+  foreach(string name in new[]{"PlanFirst.tag","PlanFirstChecked.tag"})if(File.Exists(Path.Combine(folder,name)))File.Delete(Path.Combine(folder,name));
+  CadLink link=null;
+  foreach(string mode in new[]{"new","resume"}){
+   Process bridge=LaunchBridge(folder),edge=null;
+   try{
+    edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgePlan.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true});
+    DateTime until=DateTime.UtcNow.AddSeconds(120);bool firstChecked=false;
+    while(!edge.HasExited&&DateTime.UtcNow<until){
+     if(mode=="resume"&&!firstChecked&&File.Exists(Path.Combine(folder,"PlanFirst.tag"))){
+      link=Shared<CadLink>(folder,"Auto.json");State first=Shared<State>(folder,"State.json");CadContext firstContext=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));
+      CheckDrawing(firstContext,link,new Pt{x=.5,y=.015},3);
+      if(LinePresent(firstContext,link,new Pt{x=0,y=0},new Pt{x=.5,y=.015}))throw new Exception("First measurement has a fabricated origin connector");
+      RequireNoMeasuredOrigin(firstContext,link);if(first.planOnly||!first.firstPoint||first.station!=.5)throw new Exception("First real measurement state is not distinct from a plan-only baseline");
+      File.Copy(Path.Combine(folder,"AutoInput.txt"),Path.Combine(output,"Plan-first-CAD.txt"),true);File.WriteAllText(Path.Combine(folder,"PlanFirstChecked.tag"),"checked");firstChecked=true;Write("NATIVE_PLAN_FIRST_POINT_ONLY_OK .5m left15; no zero measured circle or connector; all100plan lines");
+     }
+     Thread.Sleep(80);
+    }
+    if(!edge.HasExited){edge.Kill();throw new Exception("Plan-only input UI timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Plan-only input UI failed: "+error);
+    link=Shared<CadLink>(folder,"Auto.json");State state=Shared<State>(folder,"State.json");CadContext context=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));
+    if(mode=="new"){
+     context.ValidatePlan(link);if(context.circles.Count!=2||!state.planOnly||state.station!=0)throw new Exception("Plan-only preparation fabricated a measurement");RequirePlanSegments(context,link);RequireNoMeasuredOrigin(context,link);
+     if(File.ReadAllText(Path.Combine(folder,"Project.json")).Contains("\"s\":"))throw new Exception("Plan-only PC snapshot contains a measured row");
+     Write("NATIVE_PLAN_ONLY_ZERO_OK save and reload retain zero measurements, two helper circles only");
+    }else{
+     if(!firstChecked||state.planOnly||state.firstPoint||state.station!=1)throw new Exception("Second real measurement state is incorrect");CheckDrawing(context,link,new Pt{x=1,y=.020},4);RequireNoMeasuredOrigin(context,link);
+     if(!LinePresent(context,link,new Pt{x=.5,y=.015},new Pt{x=1,y=.020}))throw new Exception("Second measurement is not connected to the first actual point");
+     var project=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(folder,"Project.json")));int rows=0;
+     foreach(object value in (System.Collections.IEnumerable)project["meas"]){var row=(Dictionary<string,object>)value;string station=Convert.ToString(row["s"],CultureInfo.InvariantCulture);if(String.IsNullOrWhiteSpace(station))continue;rows++;double s=Convert.ToDouble(row["s"],CultureInfo.InvariantCulture),up=Convert.ToDouble(row["up"],CultureInfo.InvariantCulture),depth=Convert.ToDouble(row["depth"],CultureInfo.InvariantCulture);if(s==.5){if(up!=10||depth!=2.3)throw new Exception("First up/depth snapshot differs");}else if(s==1){if(up!=5||depth!=2.4)throw new Exception("Second up/depth snapshot differs");}else throw new Exception("Snapshot contains a fabricated station");}
+     if(rows!=2)throw new Exception("Snapshot lost a real measurement");string latest=File.ReadAllText(Path.Combine(folder,"Latest.dxf"));if(!latest.Contains("-29990.0000000")||!latest.Contains("-29995.0000000"))throw new Exception("Latest DXF omitted the entered vertical offsets");
+     Write("NATIVE_PLAN_RESUME_TWO_POINTS_OK .5m/1m, correct sole measured connector, independent up/depth stored in PC JSON and latest DXF");
+    }
+    File.Copy(Path.Combine(folder,"AutoInput.txt"),Path.Combine(output,"Plan-"+mode+"-CAD.txt"),true);File.Copy(Path.Combine(folder,"Project.json"),Path.Combine(output,"Plan-"+mode+"-Project.json"),true);File.Copy(Path.Combine(folder,"Latest.dxf"),Path.Combine(output,"Plan-"+mode+"-Latest.dxf"),true);File.Copy(Path.Combine(folder,"Plan-"+mode+".png"),Path.Combine(output,"Plan-"+mode+".png"),true);
+    using(var owned=Process.GetProcessById(link.pid)){owned.Kill();owned.WaitForExit(5000);}Write("NATIVE_PLAN_CAD_CLOSED "+mode);
+   }finally{
+    if(edge!=null){if(!edge.HasExited)edge.Kill();edge.Dispose();}if(link!=null)try{using(var owned=Process.GetProcessById(link.pid))owned.Kill();}catch{}
+    foreach(string name in new[]{"Import.log","State.json","Auto.json"})if(File.Exists(Path.Combine(folder,name)))File.Copy(Path.Combine(folder,name),Path.Combine(output,"Plan-"+name),true);
+    if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();
+   }
+  }
+ }
+ static void RequirePlanSegments(CadContext context,CadLink link){for(int k=0;k<100;k++)if(!LinePresent(context,link,new Pt{x=k*.5,y=0},new Pt{x=(k+1)*.5,y=0}))throw new Exception("Plan-only original segment missing: "+k);}
+ static void RequireNoMeasuredOrigin(CadContext context,CadLink link){foreach(var circle in context.circles)if(Math.Abs(circle[2]*link.scale-35)<.05&&Math.Abs(circle[0]-link.x)*link.scale<.05&&Math.Abs(circle[1]-link.y)*link.scale<.05)throw new Exception("A fictitious origin measurement circle exists");}
  static void ManagedApplication(string source,bool cold=false){
   if(cold){cad.Kill();cad.WaitForExit(5000);cad.Dispose();cad=null;Write("MANAGED_COLD_START no JW_CAD is running; use the saved executable path");}
   string folder=Path.Combine(source,"Curve Drive");Directory.CreateDirectory(folder);
@@ -235,6 +302,10 @@ class JwCheck {
    link=Shared<CadLink>(folder,"Auto.json");if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
    Write("NATIVE_CALIBRATED pid="+link.pid+" actualCAD="+pid+" scale="+link.scale);if(link.pid!=pid)throw new Exception("Calibration bound another process");
    Call("auto/enable",new{});
+   const string staleName="Auto_000000000001.bat",staleToken="00000000000100000000000000000000";
+   string staleMarker=Path.Combine(folder,"StaleInvoked.tag");if(File.Exists(staleMarker))File.Delete(staleMarker);
+   string staleMacro=File.ReadAllText(Path.Combine(folder,link.Macro),Encoding.ASCII).Replace(link.token,staleToken).Replace("@echo off\r\n","@echo off\r\n> \"%~dp0StaleInvoked.tag\" echo STALE_TOKEN_FIXTURE\r\n");
+   File.WriteAllText(Path.Combine(folder,staleName),staleMacro,Encoding.ASCII);
    foreach(double station in new[]{10.5,11}){
     double offset=station==10.5?.02:-.02;State previous=Shared<State>(folder,"State.json");
     if(station==10.5){
@@ -243,11 +314,20 @@ class JwCheck {
      }
     }else{
      Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
-     IntPtr pendingList=Open();ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER");
+     IntPtr pendingList=FocusStaleMacro(staleName);if(File.Exists(staleMarker))throw new Exception("A single stale-file click invoked the macro");ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER_WITH_STALE_FOCUS");
      string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);
+     if(File.Exists(staleMarker))throw new Exception("Production activation invoked the stale token rather than the exact current session file");
+     Write("NATIVE_STALE_FOCUS_REPLACED_OK current session callback issued; stale file never executed");
     }Thread.Sleep(350);
     CheckDrawing(ReadDrawing(probe),link,new Pt{x=station,y=offset},station==10.5?2:3);
    }
+   State beforeStale=Shared<State>(folder,"State.json");CadLink beforeStaleLink=Shared<CadLink>(folder,"Auto.json");
+   FocusStaleMacro(staleName);
+   Activate(staleName,delegate(){return File.Exists(staleMarker)&&SharedLogContains(Path.Combine(folder,"AutoBatch.log"),"AUTO_SESSION_CHANGED");});
+   State afterStale=Shared<State>(folder,"State.json");CadLink afterStaleLink=Shared<CadLink>(folder,"Auto.json");
+   if(!File.Exists(staleMarker)||afterStale.session!=beforeStale.session||afterStale.station!=beforeStale.station||afterStale.state!=beforeStale.state||afterStaleLink.token!=link.token||afterStaleLink.enabled!=beforeStaleLink.enabled||afterStaleLink.message!=beforeStaleLink.message)throw new Exception("A stale callback poisoned the current registration");
+   CheckDrawing(ReadDrawing(probe),link,new Pt{x=11,y=-.02},3);Write("NATIVE_STALE_TOKEN_REFUSED_OK real stale callback refused; current registration and all geometry preserved");
+   File.Delete(Path.Combine(folder,staleName));File.Delete(staleMarker);
    bool refused=false;try{Call("auto/apply",new{session=session,station=11});}catch(WebException){refused=true;}
    if(!refused)throw new Exception("Duplicate apply was not refused");CheckDrawing(ReadDrawing(probe),link,new Pt{x=11,y=-.02},3);Screenshot("app-after-points");
    Write("NATIVE_APPLICATION_OK two automatic point updates, 20mm left/right, all planned segments retained, duplicate refused");
@@ -296,7 +376,8 @@ class JwCheck {
    string folder=Path.GetDirectoryName(args[0]),input=Path.Combine(folder,"Fixture.dxf"),probe=Path.Combine(folder,"ProbeIn.txt");if(!File.Exists(input))File.WriteAllText(input,Dxf(),Encoding.ASCII);
    File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM Read-only fixture probe\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
    string nativeInput=Path.Combine(folder,"Fixture.jww");bool seeded=File.Exists(nativeInput);cadExe=args[0];LaunchCad(seeded?nativeInput:input);Thread.Sleep(200);Screenshot("drawing");bool saved=seeded||SaveJww(folder);Write("SAVE_JWW "+saved+" nativeSeed="+seeded);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");
-   ManagedApplication(folder);bool success=false;
+   if(args.Length>2&&args[2]=="--stale-check"){NativeApplication(folder,probe);Write("STALE_FIXTURE_SUCCESS true");return 0;}
+   PlanApplication(folder);ManagedApplication(folder);bool success=false;
    foreach(string mode in new[]{"standard","legacy","minimized"}){
     if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
     int match=0;for(int i=1;i<=a.accChildCount;i++){try{string name=a.get_accName(i);Write("ITEM "+i+" name="+name+" role="+a.get_accRole(i)+" state="+a.get_accState(i)+" action="+a.get_accDefaultAction(i));if(name=="Probe_Run.bat"||name=="Probe_Run")match=i;}catch(Exception e){Write("ITEM "+i+" "+Error(e));}}

@@ -179,7 +179,7 @@ partial class CadNative {
    // Control-directed activation avoids the unsupported MSAA default action. No global mouse input.
    var kind=new StringBuilder(256);GetClassName(window,kind,kind.Capacity);
    if(kind.ToString()!="SysListView32"||!IsWindowVisible(window)||!IsWindowEnabled(window))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
-   accessible.Select(2,child);
+   accessible.Select(3,child);
    if((State(child)&2)==0)throw new Fault(409,"AUTO_ITEM_SELECTION_NOT_CONFIRMED");
    string name=Name(child);if(!String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)&&!String.Equals(name,Path.GetFileNameWithoutExtension(filename),StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
    int left,top,width,height;accessible.Location(out left,out top,out width,out height,child);
@@ -188,8 +188,13 @@ partial class CadNative {
    if(!(hit is int)||(int)hit!=child)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
    ClickRect rect;if(!ScreenToClient(window,ref point)||!GetClientRect(window,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom||point.x>32767||point.y>32767)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
    IntPtr position=new IntPtr((point.y<<16)|point.x);
-   if(!PostMessage(window,0x203,new IntPtr(1),position))throw new Fault(409,"AUTO_CONTROL_MESSAGE_FAILED");
-   PostMessage(window,0x202,IntPtr.Zero,position);
+   // A selected MSAA row is not necessarily Jw_cad's current executable.
+   // Deliver the first click to its own handler before the double-click.
+   SendMessage(window,0x201,new IntPtr(1),position);
+   SendMessage(window,0x202,IntPtr.Zero,position);
+   if((State(child)&2)==0||!String.Equals(Name(child),name,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
+   SendMessage(window,0x203,new IntPtr(1),position);
+   SendMessage(window,0x202,IntPtr.Zero,position);
   }
  }
  [StructLayout(LayoutKind.Sequential)]struct ClickPoint{public int x,y;}

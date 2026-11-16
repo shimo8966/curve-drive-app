@@ -55,7 +55,7 @@ partial class Program {
  }
  static string AutoMacro(CadLink a,bool setup){return LinkMacro(a,setup?"--setup":"--auto",setup);}
  static string LinkMacro(CadLink a,string action,bool setup){
-  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.1 - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
+  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.1a - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
   if(setup)rows.Add("REM #1 Select PLAN START once (R)Read");
   rows.AddRange(new string[]{"REM #e","@echo off","setlocal EnableExtensions DisableDelayedExpansion","set \"TARGET=%~dp0JWC_TEMP.TXT\"","if not exist \"%TARGET%\" exit /b 1","copy /y \"%TARGET%\" \"%~dp0AutoInput.txt\" >nul","\"%~dp0Bridge.exe\" "+action+" \"%TARGET%\" "+a.token+" >> \"%~dp0AutoBatch.log\" 2>&1","if errorlevel 1 goto failed","exit /b 0",":failed","findstr /b /c:\"heCurveDrive:\" \"%TARGET%\" >nul 2>&1","if not errorlevel 1 exit /b 1","> \"%TARGET%\" echo heCurveDrive: link stopped. See Import.log.","exit /b 1"});
   return String.Join("\r\n",rows.ToArray())+"\r\n";
@@ -126,7 +126,7 @@ partial class Program {
  static string AutoGeometry(CadLink a,State s){
   Pt q=CadContext.Real(a,s.q),p=CadContext.Real(a,s.p);
   string cx=F(p.x),cy=F(p.y);
-  return String.Join("\r\n",new string[]{"b0","lc3",F(q.x)+" "+F(q.y)+" "+cx+" "+cy,F(p.x-35)+" "+cy+" "+F(p.x+35)+" "+cy,cx+" "+F(p.y-35)+" "+cx+" "+F(p.y+35),"ci "+cx+" "+cy+" 35.0000000",""});
+  var rows=new List<string>{"b0","lc3"};if(!s.firstPoint)rows.Add(F(q.x)+" "+F(q.y)+" "+cx+" "+cy);rows.AddRange(new[]{F(p.x-35)+" "+cy+" "+F(p.x+35)+" "+cy,cx+" "+F(p.y-35)+" "+cx+" "+F(p.y+35),"ci "+cx+" "+cy+" 35.0000000",""});return String.Join("\r\n",rows.ToArray());
  }
  static int AutoCli(string action,string filename,string token){
   string target=Path.GetFullPath(filename);
@@ -143,25 +143,25 @@ partial class Program {
      if(s.state=="pending"||!CadNative.ManagedPath(a)||!String.Equals(context.drawing,a.drawing,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"MANAGED_DRAWING_MISMATCH");
      var window=CadNative.FindSetup(context.drawing);if(window.pid!=a.pid||window.started!=a.started)throw new Fault(409,"CAD_PROCESS_CHANGED");
      Pt origin=context.ManagedOrigin(a);a.x=origin.x;a.y=origin.y;a.group=context.group;a.scale=context.scales[0];a.width=context.width;a.height=context.height;
-     context.Validate(a,s.p);a.calibrated=true;a.enabled=true;a.verifiedStation=s.station;a.message="作業図面と実測終点を確認済み。入力できます。";AutoSave(a);
+     if(s.planOnly)context.ValidatePlan(a);else context.Validate(a,s.p);a.calibrated=true;a.enabled=true;a.verifiedStation=s.station;a.message=s.planOnly?"計画図面を確認済み。最初の実測を入力できます。":"作業図面と実測終点を確認済み。入力できます。";AutoSave(a);
      File.WriteAllText(target,"h#CurveDrive: work drawing ready. Return to input.\r\n",Encoding.ASCII);
     }else if(action=="--verify"){
      if(!a.managed||!a.calibrated||!a.enabled)throw new Fault(409,"AUTO_NO_PENDING_OR_DISABLED");
-     CadNative.FindCallback(a);context.Validate(a,s.p);if(s.state!="ready")context.RequireMeasuredLine(a,s.q,s.p);
-     a.verifiedStation=s.station;a.checkedNonce=a.checkNonce;a.message="CADの実測点と線を確認済み。";AutoSave(a);
-     File.WriteAllText(target,"h#CurveDrive: measured point and line verified.\r\n",Encoding.ASCII);
+     CadNative.FindCallback(a);if(s.planOnly)context.ValidatePlan(a);else context.Validate(a,s.p);if(s.state!="ready"&&!s.firstPoint)context.RequireMeasuredLine(a,s.q,s.p);
+     a.verifiedStation=s.station;a.checkedNonce=a.checkNonce;a.message=s.planOnly?"計画図面を確認済み。最初の実測を入力できます。":s.firstPoint?"CADの最初の実測点を確認済み。":"CADの実測点と線を確認済み。";AutoSave(a);
+     File.WriteAllText(target,s.planOnly?"h#CurveDrive: plan anchors verified.\r\n":s.firstPoint?"h#CurveDrive: first measured point verified.\r\n":"h#CurveDrive: measured point and line verified.\r\n",Encoding.ASCII);
     }else if(action=="--setup"){
      if(s.state=="pending"||context.picked==null)throw new Fault(409,"AUTO_SETUP_NEEDS_BASELINE_AND_ORIGIN");
      var window=CadNative.FindSetup(context.drawing);
      a.drawing=context.drawing;a.x=context.picked.x;a.y=context.picked.y;a.group=context.group;a.scale=context.scales[a.group];a.width=context.width;a.height=context.height;a.pid=window.pid;a.started=window.started;
-     context.Validate(a,s.p);a.calibrated=true;a.enabled=false;a.fieldMode=false;a.fieldReady=false;a.message="発進点登録済み。入力画面で作業を開始できます。";AutoSave(a);
+     if(s.planOnly)context.ValidatePlan(a);else context.Validate(a,s.p);a.calibrated=true;a.enabled=false;a.fieldMode=false;a.fieldReady=false;a.message="発進点登録済み。入力画面で作業を開始できます。";AutoSave(a);
      File.WriteAllText(target,"h#CurveDrive: origin registered. Return to HTML and start work.\r\n",Encoding.ASCII);
     }else{
      bool field=action=="--field";
      if(!a.calibrated||(field?!a.fieldMode:!a.enabled))throw new Fault(409,"AUTO_NO_PENDING_OR_DISABLED");
      if(field){
       var window=CadNative.FindSetup(context.drawing);
-      context.Validate(a,s.state=="pending"?s.q:s.p);
+      if(s.planOnly||s.firstPoint&&s.state=="pending")context.ValidatePlan(a);else context.Validate(a,s.state=="pending"?s.q:s.p);
       // Rebind only after a manual CAD invocation and full geometry/file checks.
       a.pid=window.pid;a.started=window.started;a.fieldReady=true;
       if(s.state!="pending"){
@@ -170,7 +170,7 @@ partial class Program {
       }
      }else{
       if(s.state!="pending")throw new Fault(409,"AUTO_NO_PENDING_OR_DISABLED");
-      CadNative.FindCallback(a);context.Validate(a,s.q);
+      CadNative.FindCallback(a);if(s.firstPoint)context.ValidatePlan(a);else context.Validate(a,s.q);
      }
      string geometry=AutoGeometry(a,s);s.state="issued";s.saved=Now();Save(s);
      File.WriteAllText(target,geometry,Encoding.ASCII);
@@ -182,7 +182,8 @@ partial class Program {
   }catch(Exception e){
    string code=e is Fault?e.Message:"AUTO_IO_OR_NATIVE_ERROR";
    try{File.WriteAllText(target,"heCurveDrive: "+code+". See Import.log.\r\n",Encoding.ASCII);}catch{}
-   try{using(Lock()){State s=Load();CadLink a=AutoLoad(s);if(a!=null){a.enabled=false;a.fieldReady=false;a.message=code;AutoSave(a);}}}catch{}
+   // An old callback must not disable the current, different registration.
+   try{using(Lock()){State s=Load();CadLink a=AutoLoad(s);if(a!=null&&a.token==token){a.enabled=false;a.fieldReady=false;a.message=code;AutoSave(a);}}}catch{}
    try{Log("AUTO_ERROR "+code+" "+e.GetType().Name+" "+e.Message);}catch{}Console.Error.WriteLine(code);return 2;
   }
  }
@@ -235,24 +236,25 @@ partial class Program {
   var d=Body(ctx,8388608);if(path=="/managed/point"){using(Lock()){State current=Load();CadLink link=AutoLoad(current);if(link==null||!link.managed)throw new Fault(409,"MANAGED_WORK_REQUIRED");}Receive(ctx,d);return true;}
   if(Environment.OSVersion.Platform!=PlatformID.Win32NT)throw new Fault(501,"AUTO_WINDOWS_ONLY");
   string requestId=Text(Field(d,"requestId"),32);Guid requestGuid;if(!Guid.TryParseExact(requestId,"N",out requestGuid))throw new Fault(400,"MANAGED_REQUEST_INVALID");
-  string site=Text(Field(d,"site"),120),plan=Text(Field(d,"planKey"),16000),project=Json.Serialize(Map(Field(d,"project")));double station=Station(Field(d,"station"));Pt point=Point(Field(d,"p")),end=Point(Field(d,"end"));
+  object hasValue;bool hasMeasurements=true;if(d.TryGetValue("hasMeasurements",out hasValue)){if(!(hasValue is bool))throw new Fault(400,"INVALID_HAS_MEASUREMENTS");hasMeasurements=(bool)hasValue;}
+  string site=Text(Field(d,"site"),120),plan=Text(Field(d,"planKey"),16000),project=Json.Serialize(Map(Field(d,"project")));double station=hasMeasurements?Station(Field(d,"station")):0;Pt point=hasMeasurements?Point(Field(d,"p")):new Pt{x=0,y=0},end=Point(Field(d,"end"));
   CadLink a;State state;
   using(Lock()){
    state=Load();a=AutoLoad(state);string receipt=Path.Combine(Root,"ManagedRequest.json");Dictionary<string,object> prior=File.Exists(receipt)?Map(Json.DeserializeObject(File.ReadAllText(receipt,Utf8))):null;
    if(prior!=null&&Text(Field(prior,"requestId"),32)==requestId){
-    if(a==null||!a.managed||Text(Field(prior,"session"),32)!=a.session||Text(Field(prior,"project"),1000000)!=project||state.site!=site||state.planKey!=plan||!Near(state.station,station)||!Same(state.p,point))throw new Fault(409,"MANAGED_REQUEST_CHANGED");
+    if(a==null||!a.managed||Text(Field(prior,"session"),32)!=a.session||Text(Field(prior,"project"),1000000)!=project||state.site!=site||state.planKey!=plan||state.planOnly==hasMeasurements||!Near(state.station,station)||!Same(state.p,point))throw new Fault(409,"MANAGED_REQUEST_CHANGED");
    }else{
     string session=Guid.NewGuid().ToString("N");a=new CadLink{schema=1,session=session,token=Guid.NewGuid().ToString("N"),managed=true,end=end,message="JW_CADを自動で準備中"};
     ManagedSnapshot(a,d);string folder=ManagedWork(a);a.drawing=Path.Combine(folder,"Plan_"+session.Substring(0,12)+".dxf");File.Copy(Path.Combine(folder,"Latest.dxf"),a.drawing,false);
     if(state!=null){string history=Path.Combine(Root,"History");Directory.CreateDirectory(history);File.Copy(StatePath,Path.Combine(history,state.session+"_"+Guid.NewGuid().ToString("N")+".json"),false);}
-    state=new State{schema=4,session=session,site=site,planKey=plan,state="ready",station=station,previousStation=station,p=point,q=point,saved=Now()};Save(state);AutoSave(a);
+    state=new State{schema=4,session=session,site=site,planKey=plan,state="ready",station=station,previousStation=station,p=point,q=point,planOnly=!hasMeasurements,saved=Now()};Save(state);AutoSave(a);
     ManagedWrite(receipt,Json.Serialize(new{requestId=requestId,session=session,project=project}));
    }
   }
   IntPtr inputWindow=CadNative.InputWindow();Exception failure=null;var worker=new Thread(delegate(){try{ManagedConnect(a);}catch(Exception e){failure=e;}});worker.SetApartmentState(ApartmentState.STA);worker.IsBackground=true;worker.Start();
   if(!worker.Join(45000))failure=new Fault(409,"MANAGED_START_RESULT_UNKNOWN");
   CadNative.ReturnToInput(inputWindow,a.pid);
-  if(failure!=null){using(Lock()){State current=Load();CadLink stopped=AutoLoad(current);if(stopped!=null&&stopped.token==a.token){stopped.enabled=false;stopped.message=failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED";AutoSave(stopped);}}throw new Fault(409,failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED");}
+  if(failure!=null){AutoTrace("MANAGED_SETUP_STOP "+(failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED"));using(Lock()){State current=Load();CadLink stopped=AutoLoad(current);if(stopped!=null&&stopped.token==a.token){stopped.enabled=false;stopped.message=failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED";AutoSave(stopped);}}throw new Fault(409,failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED");}
   using(Lock()){Reply(ctx,200,Latest(Load()));}return true;
  }
 }

@@ -33,6 +33,7 @@ for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs','app.htm
 shutil.copy2(root / 'qa/EdgeCheck.py',exe.parent/'EdgeCheck.py')
 shutil.copy2(root / 'qa/EdgeGuide.py',exe.parent/'EdgeGuide.py')
 shutil.copy2(root / 'qa/EdgeManaged.py',exe.parent/'EdgeManaged.py')
+shutil.copy2(root / 'qa/EdgePlan.py',exe.parent/'EdgePlan.py')
 subprocess.run([sys.executable,'-m','pip','install','--disable-pip-version-check','playwright==1.56.0'],check=True,timeout=120)
 csc_dir = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319'
 csc = csc_dir / 'csc.exe'

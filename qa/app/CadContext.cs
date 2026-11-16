@@ -74,10 +74,13 @@ class CadContext {
  }
  bool Same(double a,double b,CadLink link){return Math.Abs(a-b)<=.05/link.scale;}
  bool HasEnd(Pt p,CadLink link){foreach(var q in ends)if(Same(q.x,p.x,link)&&Same(q.y,p.y,link))return true;return false;}
- public void Validate(CadLink link,Pt previous){
+ public void ValidatePlan(CadLink link){
   if(!String.Equals(Path.GetFullPath(drawing),Path.GetFullPath(link.drawing),StringComparison.OrdinalIgnoreCase))throw new Fault(409,"CAD_DIFFERENT_DRAWING");
   if(group!=link.group||Math.Abs(scales[group]-link.scale)>1e-9||Math.Abs(width-link.width)>1e-6||Math.Abs(height-link.height)>1e-6)throw new Fault(409,"CAD_SCALE_OR_PAPER_CHANGED");
   if(!HasEnd(new Pt{x=link.x,y=link.y},link)||!HasEnd(Paper(link,link.end),link))throw new Fault(409,"CAD_PLAN_ANCHORS_CHANGED");
+ }
+ public void Validate(CadLink link,Pt previous){
+  ValidatePlan(link);
   Pt target=Paper(link,previous);bool found=false;
   foreach(var circle in circles)if(Same(circle[0],target.x,link)&&Same(circle[1],target.y,link)&&Same(circle[2],35/link.scale,link))found=true;
   if(!found)throw new Fault(409,"CAD_PREVIOUS_POINT_NOT_FOUND");

@@ -24,13 +24,15 @@ class State {
     public Pt q { get; set; }
     public double offsetMm { get; set; }
     public string saved { get; set; }
+    public bool planOnly { get; set; }
+    public bool firstPoint { get; set; }
 }
 class Fault : Exception {
     public int Status { get; private set; }
     public Fault(int status, string code) : base(code) { Status = status; }
 }
 partial class Program {
-    const string AppVersion="3.1";
+    const string AppVersion="3.1a";
     static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string StatePath = Path.Combine(Root, "State.json");
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
@@ -117,7 +119,9 @@ partial class Program {
             String.IsNullOrEmpty(s.saved) || !ValidNumber(s.offsetMm,10000000) ||
             !ValidNumber(s.station,10000) || s.station < 0 ||
             !ValidNumber(s.previousStation,10000) || s.previousStation < 0 ||
-            (s.state == "ready" ? !Near(s.station,s.previousStation) || !Same(s.p,s.q) : s.station <= s.previousStation + 0.0000001))
+            (s.planOnly && (s.firstPoint || s.state!="ready" || !Near(s.station,0) || !Near(s.previousStation,0) || !Same(s.p,new Pt{x=0,y=0}) || !Same(s.q,s.p))) ||
+            (s.firstPoint && (s.planOnly || s.state=="ready" || !Near(s.previousStation,0) || !Same(s.q,new Pt{x=0,y=0}))) ||
+            (s.state == "ready" ? !Near(s.station,s.previousStation) || !Same(s.p,s.q) : !s.firstPoint && s.station <= s.previousStation + 0.0000001))
             throw new Fault(500,"STATE_INVALID_KEEP_BACKUP");
         return s;
     }
@@ -165,8 +169,8 @@ partial class Program {
         }
     }
     static object Latest(State s) {
-        if (s == null) return new { ok = true, hasBaseline = false, hasPoint = false };
-        return new { ok = true, hasBaseline = true, hasPoint = s.state != "ready", state = s.state,
+        if (s == null) return new { ok = true, hasBaseline = false, hasPoint = false, hasMeasurements=false };
+        return new { ok = true, hasBaseline = true, hasPoint = s.state != "ready", hasMeasurements=!s.planOnly, state = s.state,
             site = s.site, planKey = s.planKey, session = s.session, station = s.station,
             previousStation = s.previousStation, saved = s.saved, cadVerified = ManagedVerified(s), automation = AutoSummary(s) };
     }
@@ -192,12 +196,12 @@ partial class Program {
         double station=Station(Field(d,"station")),previous=Station(Field(d,"previousStation"));
         double offset=Number(Field(d,"offsetMm"));
         Pt p=Point(Field(d,"p")),q=Point(Field(d,"q"));
-        if (station <= previous + 0.0000001) throw new Fault(400,"STATION_MUST_INCREASE");
         using (Lock()) {
             State s=Load();
             if (s == null) throw new Fault(409,"BASELINE_REQUIRED");
             if (s.site != site || s.planKey != plan || s.session != session)
                 throw new Fault(409,"BASELINE_MISMATCH");
+            if (!s.planOnly && !s.firstPoint && station <= previous + 0.0000001) throw new Fault(400,"STATION_MUST_INCREASE");
             CadLink link=AutoLoad(s);
             if(link!=null&&link.fieldMode&&!link.fieldReady)throw new Fault(409,"FIELD_CAD_START_REQUIRED");
             if (s.state == "pending") {
@@ -206,9 +210,10 @@ partial class Program {
                 }
                 throw new Fault(409,"PENDING_POINT_NOT_ISSUED");
             }
-            if (station <= s.station + 0.0000001) throw new Fault(409,"POINT_ALREADY_ISSUED_OR_OLD");
+            if (!s.planOnly && station <= s.station + 0.0000001) throw new Fault(409,"POINT_ALREADY_ISSUED_OR_OLD");
             if (!Near(previous,s.station) || !Same(q,s.p)) throw new Fault(409,"PREVIOUS_POINT_MISMATCH");
-            if(link!=null&&link.managed)ManagedSnapshot(link,d);
+            if(link!=null&&link.managed){ManagedSnapshot(link,d);link.verifiedStation=null;AutoSave(link);}
+            bool first=s.planOnly;s.planOnly=false;s.firstPoint=first;
             s.state="pending";s.previousStation=previous;s.station=station;s.p=p;s.q=q;s.offsetMm=offset;s.saved=Now();
             Save(s);
             Reply(ctx,200,new {ok=true,state="pending",station=s.station,timestamp=s.saved,idempotent=false});
@@ -239,11 +244,10 @@ partial class Program {
     static string Geometry(State s) {
         double r=.035,x=s.p.x,y=s.p.y;
         // b0 reads actual millimetres. bz would apply paper scale again.
-        return String.Join("\r\n",new string[] {
-            "b0", "lc3", Line(s.q,s.p),
+        var rows=new List<string>{"b0","lc3"};if(!s.firstPoint)rows.Add(Line(s.q,s.p));rows.AddRange(new string[]{
             Line(new Pt{x=x-r,y=y},new Pt{x=x+r,y=y}),
             Line(new Pt{x=x,y=y-r},new Pt{x=x,y=y+r}),
-            "ci "+F(x*1000)+" "+F(y*1000)+" "+F(r*1000), "" });
+            "ci "+F(x*1000)+" "+F(y*1000)+" "+F(r*1000), "" });return String.Join("\r\n",rows.ToArray());
     }
     static int Import(string filename) {
         string expected=Path.GetFullPath(Path.Combine(Root,"JWC_TEMP.TXT"));
@@ -281,7 +285,7 @@ partial class Program {
         var listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:18718/");
         try {listener.Start();}
         catch(Exception e) {Console.Error.WriteLine("Cannot start bridge: "+e.Message);return 1;}
-        Console.WriteLine("CurveDrive Bridge v3.1 http://127.0.0.1:18718/ (local only)");
+        Console.WriteLine("CurveDrive Bridge v3.1a http://127.0.0.1:18718/ (local only)");
         Console.WriteLine("Folder: "+Root+" | CAD drawing is not acknowledged.");
         if (open) {
             try {System.Diagnostics.Process.Start("microsoft-edge:http://127.0.0.1:18718/");}
