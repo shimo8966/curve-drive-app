@@ -10,6 +10,8 @@ with sync_playwright() as p:
     page=browser.new_page(viewport={'width':800,'height':750},accept_downloads=True)
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto('http://127.0.0.1:18718/')
+    # Finish initial PC restore before the fixture replaces browser storage.
+    page.wait_for_function('document.querySelector("#guideConnection").textContent === "PCに接続済み"')
     if mode=='new':
         page.evaluate('data=>{localStorage.setItem("curve-drive-v28",JSON.stringify(data));localStorage.removeItem("curve-drive-guide-v1")}',data);page.reload()
     page.wait_for_function('document.querySelector("#guideConnection").textContent === "PCに接続済み"')

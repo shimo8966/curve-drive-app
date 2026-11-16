@@ -16,6 +16,8 @@ with sync_playwright() as p:
     errors=[]
     page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto('http://127.0.0.1:18718/')
+    # Finish initial PC restore before the fixture replaces browser storage.
+    page.wait_for_function('document.querySelector("#guideConnection").textContent === "PCに接続済み"')
     if mode not in ('resume','cold'):
         page.evaluate('data=>{localStorage.setItem("curve-drive-v28",JSON.stringify(data));localStorage.removeItem("curve-drive-guide-v1")}',data)
         page.reload()

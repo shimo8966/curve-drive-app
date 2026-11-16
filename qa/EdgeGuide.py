@@ -26,6 +26,8 @@ with sync_playwright() as p:
     errors=[]
     page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto('http://127.0.0.1:18718/')
+    # Finish initial PC restore before the fixture replaces browser storage.
+    page.wait_for_function('document.querySelector("#guideConnection").textContent === "PCに接続済み"')
     if mode == 'new':
         badges={'basics':dict(data['basics']),'segs':[{'type':'S','l':'10','r':''},{'type':'L','l':'15','r':'100'},{'type':'S','l':'8','r':''},{'type':'R','l':'12','r':'80'},{'type':'S','l':'5','r':''}],'meas':[{'s':'5','left':'15','up':''},{'s':'10','left':'22','up':''},{'s':'10.5','left':'18','up':''}]}
         page.evaluate('data=>{localStorage.setItem("curve-drive-v28",JSON.stringify(data));localStorage.removeItem("curve-drive-guide-v1")}',badges);page.reload()
