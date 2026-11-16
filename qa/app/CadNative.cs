@@ -350,7 +350,13 @@ partial class CadNative {
     if(link.managed)ManagedFolder(list,trace);
    }
    until=DateTime.UtcNow.AddSeconds(12);
-   while(DateTime.UtcNow<until){if(completed()){Thread.Sleep(250);return;}Thread.Sleep(80);}
+   while(DateTime.UtcNow<until){if(completed()){
+    // State is saved before Jw_cad consumes the returned file. Wait until its
+    // registered main window and menu are available before opening another BAT.
+    DateTime idleUntil=DateTime.UtcNow.AddSeconds(5);
+    while(DateTime.UtcNow<idleUntil){CadWindow current=Find(link,true);if(IsWindowVisible(current.handle)&&IsWindowEnabled(current.handle)&&External(GetMenu(current.handle),0)!=0){Thread.Sleep(80);return;}Thread.Sleep(50);}
+    throw new Fault(409,"AUTO_CAD_BUSY_AFTER_CALLBACK");
+   }Thread.Sleep(80);}
    throw new Fault(409,"AUTO_RESULT_UNKNOWN_NEW_DXF_REQUIRED");
   }finally{
    uint currentPid;GetWindowThreadProcessId(GetForegroundWindow(),out currentPid);

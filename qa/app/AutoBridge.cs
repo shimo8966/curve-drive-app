@@ -221,10 +221,10 @@ partial class Program {
    using(Lock()){AutoSave(a);}
   }
   if(a.calibrated&&a.enabled)return;
-  a.calibrated=false;a.enabled=false;a.verifiedStation=null;
+  a.calibrated=false;a.enabled=false;a.verifiedStation=null;a.message="JW_CADを自動で準備中";
   using(Lock()){AutoSave(a);}
   File.WriteAllText(Path.Combine(Root,a.Macro),LinkMacro(a,"--auto",false),Encoding.ASCII);
-  CadNative.Execute(a,delegate(){using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(s==null||s.session!=a.session||current==null||current.token!=a.token)throw new Fault(409,"AUTO_SESSION_CHANGED");if(current.message!=null&&current.message.StartsWith("MANAGED_",StringComparison.Ordinal))throw new Fault(409,current.message);return current.calibrated&&current.enabled;}},AutoTrace);
+  CadNative.Execute(a,delegate(){using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(s==null||s.session!=a.session||current==null||current.token!=a.token)throw new Fault(409,"AUTO_SESSION_CHANGED");if(current.message!=null&&System.Text.RegularExpressions.Regex.IsMatch(current.message,"^[A-Z][A-Z0-9_]+$"))throw new Fault(409,current.message);return current.calibrated&&current.enabled;}},AutoTrace);
  }
  static bool ManagedRoute(HttpListenerContext ctx,string method,string path){
   if(method=="GET"&&path=="/managed/project"){
