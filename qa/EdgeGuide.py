@@ -26,6 +26,17 @@ with sync_playwright() as p:
     errors=[]
     page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto('http://127.0.0.1:18718/')
+    if mode == 'new':
+        page.wait_for_function('document.querySelector("#guideConnection").textContent === "PCに接続済み"')
+        page.locator('#guidePrimary').click()
+        assert page.locator('#alignRow_0').inner_text()=='直線'
+        assert '直線 → 左カーブ' in page.locator('#alignRow_1').inner_text()
+        page.locator('[data-meas="2"][data-key="s"]').fill('11')
+        assert page.locator('#activeAlignment').inner_text()=='左カーブ・R100m'
+        page.locator('[data-meas="2"][data-key="s"]').fill('40')
+        assert page.locator('#activeAlignment').inner_text()=='右カーブ・R80m'
+        assert not info()['latest']['hasBaseline']
+        print('NATIVE_ALIGNMENT_BADGES_OK straight, left R100, right R80 and boundary; no CAD send during review',flush=True)
     page.evaluate('data => {localStorage.setItem("curve-drive-v28",JSON.stringify(data));localStorage.removeItem("curve-drive-guide-v1")}',data)
     page.reload()
     page.wait_for_function('document.querySelector("#guideConnection").textContent === "PCに接続済み"')
@@ -40,6 +51,9 @@ with sync_playwright() as p:
         page.locator('#guidePrimary').click()
         page.wait_for_function('document.querySelector("#guideStep").textContent.includes("4 / 5")')
         assert info()['latest']['automation']['prepared']
+        page.locator('#guideFolder').click()
+        page.wait_for_function('document.querySelector("#guideNotice").textContent.includes("フォルダー内で表示しました")')
+        print('NATIVE_GUIDE_FOLDER_OK Explorer launched for the generated setup BAT',flush=True)
         (folder/'GuideReady.tag').touch()
         wait_for(lambda:info()['latest']['automation']['calibrated'])
         page.bring_to_front()

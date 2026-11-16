@@ -264,7 +264,7 @@ async function bridgeSend(selectedStation){
   bridgeText('延長 '+p.s+'m をCADへ自動引渡ししました。CADの描画位置を確認してください。',true);
  }else bridgeText('PC受信済み：延長 '+p.s+'m。CADでの描画は未確認です。自動連携はOFFです。'+(last.automation&&last.automation.prepared?'再送・手動取り込みをせず、連携状態とImport.logを確認してください。':'手動の場合は Curve_Latest.bat を一回実行してください。'),true);
  guideObserve({...last,station:p.s,state:last.automation?.enabled?'issued':'pending'});return true;
- }catch(err){if(accepted){try{const stopped=await bridgeRequest('latest');showAuto(stopped.automation);guideObserve(stopped)}catch{}bridgeText('PC受信後に自動連携を停止しました：'+err.message+'。再送・終点の再登録はせず、連携状態を確認してください。',false)}else sendFailure(err);return false}finally{setBusy(false)}
+ }catch(err){if(accepted){try{const stopped=await bridgeRequest('latest');showAuto(stopped.automation);guideObserve(stopped)}catch{}bridgeText('PC受信後に自動連携を停止しました：'+err.message+'。再送・終点の再登録はせず、連携状態を確認してください。',false);if(guideState.phase==='working'){guideError='PCは入力を受け取りました。CADへの反映を確認できません。\n'+guideFailure(err)+'\n送り直さず、作業状態を確認してください。';renderGuide()}}else sendFailure(err);return false}finally{setBusy(false)}
 }
 $('bridgeSend').onclick=()=>bridgeSend();$('bridgeBaseline').onclick=bridgeBaseline;$('bridgeTest').onclick=bridgeCheck;
 
@@ -360,7 +360,7 @@ function renderGuide(){
   if(guideState.resumePending!==undefined)$('guideNotice').textContent=guideError||'受信済みの '+guideState.resumePending+'m の測点も、この操作で一回取り込みます。';
  }else if(phase==='working'){
   step='入力';title=a?.enabled?'準備できました。入力してEnterです':'確認方式で入力できます';description=a?.enabled?'推進延長 → 左右ズレ → 上下ズレの順に入力します。\n最後の上下欄でEnterを押すと、JW_CADへ反映します。':'最後の上下欄でEnterを押し、JW_CADの「再実行」を一回押します。';primary='次の測点を入力する ↓';$('guideSummary').innerHTML='<span class="modePill">'+(a?.enabled?'自動で反映':'CADの再実行で反映')+'</span> '+esc(a?.drawing||'');
-  $('guideSecondary').hidden=false;$('guideSecondary').textContent='入力・図面の設定を見直す';if(!guideWorking()){$('guideNotice').textContent=guideError||guideMessage||'連携が停止しています。入力は保持しています。「作業状態を確認する」を押してください。';primary='作業状態を確認する';}
+  $('guideSecondary').hidden=false;$('guideSecondary').textContent='入力・図面の設定を見直す';if(!guideWorking()){title='連携が停止しています';description='入力内容は残っています。下のボタンで作業状態を確認してください。';$('guideSummary').innerHTML='<span class="modePill">停止中</span> '+esc(a?.drawing||'');$('guideNotice').textContent=guideError||guideMessage||'入力を送り直さず、作業状態を確認してください。';primary='作業状態を確認する';}
  }
  $('guideStep').textContent=step;$('guideTitle').textContent=title;$('guideDescription').textContent=description;$('guidePrimary').textContent=primary;
  const progress={review:0,open:1,save:2,origin:3,pick:4,working:5}[phase];$('guideProgress').innerHTML=progress===undefined?'':[0,1,2,3,4].map(i=>'<li class="'+(i<progress?'done':i===progress?'current':'')+'" aria-label="準備 '+(i+1)+'"></li>').join('');
@@ -383,10 +383,10 @@ function guideFailure(err){
  if(err.code){const human=autoReason(err.code).replace(/\s*[A-Z][A-Z0-9_]+$/,'').trim();if(human)return human;return err.status===400?'入力した数値と必須欄を確認してください。':'作業の状態を確認できませんでした。入力は保持しています。';}return err.message||'処理を完了できませんでした。入力は保持しています。';
 }
 async function guideRefresh(){if(bridgeBusy)return;setBusy(true);try{await guideRead()}catch(err){guideLoaded=true;guideInfo=null;guideState.phase='connection';guideState.serverError=!!err.status&&err.status!==404;guideError=guideFailure(err);renderGuide()}finally{setBusy(false)}}
-function guideModel(){const m=model();if(!m.mm.length)throw Error('最初の実測値を、一行以上入力してください。');samplePlan(m);return m}
+function guideModel(){bridgeSite();const m=model();if(!m.mm.length)throw Error('最初の実測値を、一行以上入力してください。');samplePlan(m);return m}
 function guideDownload(repeat=false){
  const m=guideModel(),fingerprint=guideFingerprint();if(repeat&&guideState.snapshot!==fingerprint)throw Error('入力が変わったため、一つ前へ戻って図面を保存し直してください。');
- if(!repeat){const d=new Date(),pad=n=>String(n).padStart(2,'0');guideState={phase:'open',workId:guideInfo?.workId,snapshot:fingerprint,filename:'Plan_'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds())+'.dxf'};}
+ if(!repeat){const d=new Date(),pad=n=>String(n).padStart(2,'0');guideState={phase:'open',workId:guideInfo?.workId,snapshot:fingerprint,filename:'Plan_'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds())+'_'+Math.floor(Math.random()*65536).toString(16).padStart(4,'0').toUpperCase()+'.dxf'};}
  saveFile(guideState.filename,dxf(m),'application/dxf');guideState.phase='open';saveGuide();renderGuide();
 }
 async function guidePrepare(){
