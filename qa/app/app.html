@@ -236,6 +236,7 @@ async function bridgeRequest(path,body){
 }
 function sendFailure(err){bridgeText((err.uncertain?'受信結果が不明です。再入力せず「連携状態を確認」でPCの状態を照合してください。':'送信を確定できません：')+err.message+'。訂正時は新しいDXFを開いて実測終点を再登録してください。',false)}
 function latestText(last){
+ if(last.automation?.managed&&last.cadVerified)return '延長 '+last.station+'m の実測点をJW_CADで確認済みです。入力とDXFはこのPCに自動保存しています。';
  if(!last.hasBaseline)return 'PC連携成功／DXFの実測終点が未登録です。新しいDXFをテスト用に開いて終点を登録してください。';
  const prefix='PC連携成功／'+last.site+'／延長 '+last.station+'m：';
  if(last.automation&&last.automation.fieldMode&&!last.automation.fieldReady)return prefix+(/^[A-Z0-9_]+$/.test(last.automation.message||'')?'確認方式を停止しました：'+autoReason(last.automation.message)+'。繰り返し実行せず、記録を確認してください。':'CAD側の開始待ちです。Field_Run.batを一回選んでください。');

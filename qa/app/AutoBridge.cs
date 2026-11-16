@@ -249,8 +249,9 @@ partial class Program {
     ManagedWrite(receipt,Json.Serialize(new{requestId=requestId,session=session,project=project}));
    }
   }
-  Exception failure=null;var worker=new Thread(delegate(){try{ManagedConnect(a);}catch(Exception e){failure=e;}});worker.SetApartmentState(ApartmentState.STA);worker.IsBackground=true;worker.Start();
+  IntPtr inputWindow=CadNative.InputWindow();Exception failure=null;var worker=new Thread(delegate(){try{ManagedConnect(a);}catch(Exception e){failure=e;}});worker.SetApartmentState(ApartmentState.STA);worker.IsBackground=true;worker.Start();
   if(!worker.Join(45000))failure=new Fault(409,"MANAGED_START_RESULT_UNKNOWN");
+  CadNative.ReturnToInput(inputWindow,a.pid);
   if(failure!=null){using(Lock()){State current=Load();CadLink stopped=AutoLoad(current);if(stopped!=null&&stopped.token==a.token){stopped.enabled=false;stopped.message=failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED";AutoSave(stopped);}}throw new Fault(409,failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED");}
   using(Lock()){Reply(ctx,200,Latest(Load()));}return true;
  }

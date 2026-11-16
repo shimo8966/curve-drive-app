@@ -170,17 +170,24 @@ class JwCheck {
    return link;
  }
  static Process StartGuide(string folder,string mode){return Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeGuide.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true});}
- static void ManagedApplication(string source){
+ static void ManagedApplication(string source,bool cold=false){
+  if(cold){cad.Kill();cad.WaitForExit(5000);cad.Dispose();cad=null;Write("MANAGED_COLD_START no JW_CAD is running; use the saved executable path");}
   string folder=Path.Combine(source,"Curve Drive");Directory.CreateDirectory(folder);
   foreach(string name in new[]{"Bridge.exe","app.html","EdgeManaged.py"})File.Copy(Path.Combine(source,name),Path.Combine(folder,name),true);
   Process bridge=LaunchBridge(folder);CadLink link=null;
   try{
-   foreach(string mode in new[]{"new","resume"}){
+   foreach(string mode in cold?new[]{"cold"}:new[]{"new","resume","curve"}){
     using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeManaged.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
      if(!edge.WaitForExit(120000)){edge.Kill();throw new Exception("Input-only managed flow timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Input-only managed flow failed: "+error);
     }
     link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
-    CadContext context=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));CheckDrawing(context,link,state.p,mode=="new"?4:5);
+    CadContext context=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));
+    if(mode=="curve"||mode=="cold"){
+     Func<Pt,Pt> rotate=delegate(Pt p){double angle=Math.PI/6;return new Pt{x=p.x*Math.Cos(angle)-p.y*Math.Sin(angle),y=p.x*Math.Sin(angle)+p.y*Math.Cos(angle)};};Pt expected=rotate(CurvePoint(cold?49:40,cold?.03:-.02));
+     context.Validate(link,expected);context.RequireMeasuredLine(link,rotate(CurvePoint(cold?40:10.5,cold?-.02:.018)),expected);if(context.circles.Count!=(cold?5:4))throw new Exception("Managed curve circle count differs");
+     for(int k=0;k<100;k++)if(!LinePresent(context,link,rotate(CurvePoint(k*.5,0)),rotate(CurvePoint((k+1)*.5,0))))throw new Exception("Managed curve plan segment missing");
+     Write("NATIVE_MANAGED_CURVE_GEOMETRY_OK translated origin, heading30, perpendicular offset, 100 plan segments");
+    }else CheckDrawing(context,link,state.p,mode=="new"?4:5);
     if(!link.managed||link.verifiedStation!=state.station)throw new Exception("Managed geometry was not verified");
     File.Copy(Path.Combine(folder,"AutoInput.txt"),Path.Combine(output,"Managed-"+mode+"-CAD.txt"),true);File.Copy(Path.Combine(folder,"Import.log"),Path.Combine(output,"Managed-Import.log"),true);Write("NATIVE_MANAGED_"+mode.ToUpperInvariant()+"_OK input screen only; no fixture CAD action");
     using(var owned=Process.GetProcessById(link.pid)){owned.Kill();owned.WaitForExit(5000);}
@@ -246,7 +253,8 @@ class JwCheck {
    Activate("Field_Run.bat",delegate(){CadLink current=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));return current.fieldReady&&current.pid==pid;});
    link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));Write("NATIVE_RESTART_READY pid="+pid+" station="+resumed.station);
    Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=11.5,previousStation=11,p=new{x=11.5,y=.03},q=new{x=11,y=-.02},offsetMm=30});
-   Rerun();WaitIssued(folder,11.5);Rerun();Thread.Sleep(500);CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
+   Rerun();WaitIssued(folder,11.5);Thread.Sleep(500);CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
+   DateTime beforeDuplicate=File.GetLastWriteTimeUtc(Path.Combine(folder,"Auto.json"));Activate("Field_Run.bat",delegate(){return File.GetLastWriteTimeUtc(Path.Combine(folder,"Auto.json"))>beforeDuplicate;});CheckDrawing(ReadDrawing(probe),link,new Pt{x=11.5,y=.03},4);
    Write("NATIVE_FIELD_RESTART_OK saved JWW, new CAD and bridge processes, preserved session, actual Re-run button, duplicate refused");
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();foreach(string file in new[]{"Import.log","State.json","Auto.json","Setup.log"}){string path=Path.Combine(folder,file);if(File.Exists(path))File.Copy(path,Path.Combine(output,"Fixture-"+file),true);}}
  }
@@ -294,7 +302,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);ManagedApplication(folder,true);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }
