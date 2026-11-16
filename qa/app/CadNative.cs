@@ -131,6 +131,15 @@ interface CadListReader {
  int Count();string Name(int child);int Role(int child);int State(int child);string DefaultAction(int child);void Invoke(int child);
 }
 class CadListChoice {
+ public static void WaitSelected(Func<string> readName,Func<int> readState,string expected,Action pause,int attempts){
+  for(int i=0;i<attempts;i++){
+   if(!Matches(readName(),expected))throw new Fault(409,"AUTO_ITEM_CHANGED");
+   int state=readState();if((state&0x18000)!=0)throw new Fault(409,"AUTO_ITEM_NOT_VISIBLE");
+   if((state&2)!=0){if(!Matches(readName(),expected))throw new Fault(409,"AUTO_ITEM_CHANGED");return;}
+   pause();
+  }
+  throw new Fault(409,"AUTO_ITEM_SELECTION_NOT_CONFIRMED");
+ }
  public static string FailureDetail(string step,Exception e){return "AUTO_UI_ERROR step="+step+" type="+e.GetType().FullName+" HRESULT=0x"+e.HResult.ToString("X8");}
  static T Read<T>(string step,Func<T> read,Action<string> trace){
   try{return read();}catch(Fault){throw;}catch(Exception e){trace(FailureDetail(step,e));throw new Fault(409,"AUTO_LIST_READ_FAILED");}
@@ -168,8 +177,8 @@ class CadListChoice {
 partial class CadNative {
  sealed class ListReader:CadListReader {
   readonly CadAccessible accessible;
-  readonly IntPtr window;readonly string filename;
-  public ListReader(CadAccessible value,IntPtr handle,string expected){accessible=value;window=handle;filename=expected;}
+  readonly IntPtr window;readonly string filename;readonly Action<string> trace;
+  public ListReader(CadAccessible value,IntPtr handle,string expected,Action<string> log){accessible=value;window=handle;filename=expected;trace=log;}
   public int Count(){return accessible.Count();}
   public string Name(int child){return accessible.Name(child);}
   public int Role(int child){object value=accessible.Role(child);return value is int?(int)value:-1;}
@@ -180,7 +189,11 @@ partial class CadNative {
    var kind=new StringBuilder(256);GetClassName(window,kind,kind.Capacity);
    if(kind.ToString()!="SysListView32"||!IsWindowVisible(window)||!IsWindowEnabled(window))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
    accessible.Select(3,child);
-   if((State(child)&2)==0)throw new Fault(409,"AUTO_ITEM_SELECTION_NOT_CONFIRMED");
+   Action awaitSelection=delegate(){CadListChoice.WaitSelected(delegate(){
+    var currentKind=new StringBuilder(256);GetClassName(window,currentKind,currentKind.Capacity);if(currentKind.ToString()!="SysListView32"||!IsWindowVisible(window)||!IsWindowEnabled(window))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");return Name(child);
+   },delegate(){int state=State(child);int focused=SendMessage(window,0x100C,new IntPtr(-1),new IntPtr(1)).ToInt32();return focused==child-1?state:state&~2;},filename,delegate(){Thread.Sleep(40);},10);};
+   // Legacy providers may not apply TAKEFOCUS|TAKESELECTION immediately.
+   // Confirm selection only after the verified native first click below.
    string name=Name(child);if(!String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)&&!String.Equals(name,Path.GetFileNameWithoutExtension(filename),StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
    int left,top,width,height;accessible.Location(out left,out top,out width,out height,child);
    if(width<=0||height<=0)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
@@ -192,7 +205,9 @@ partial class CadNative {
    // Deliver the first click to its own handler before the double-click.
    SendMessage(window,0x201,new IntPtr(1),position);
    SendMessage(window,0x202,IntPtr.Zero,position);
-   if((State(child)&2)==0||!String.Equals(Name(child),name,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
+   trace("AUTO_UI_FIRST_CLICK_DELIVERED child="+child);
+   awaitSelection();if(!String.Equals(Name(child),name,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
+   trace("AUTO_UI_SELECTED_AFTER_CLICK child="+child);
    SendMessage(window,0x203,new IntPtr(1),position);
    SendMessage(window,0x202,IntPtr.Zero,position);
   }
@@ -311,7 +326,7 @@ partial class CadNative {
    int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out accessible);
    trace("AUTO_UI_LIST_OBJECT HRESULT=0x"+hr.ToString("X8"));
    if(hr!=0||accessible==null)throw new Fault(409,"AUTO_LIST_NOT_ACCESSIBLE");
-   CadListChoice.Run(new ListReader(accessible,list,filename),filename,guard,trace);
+   CadListChoice.Run(new ListReader(accessible,list,filename,trace),filename,guard,trace);
   }catch(Fault){throw;}catch(Exception e){trace(CadListChoice.FailureDetail("list-object",e));throw new Fault(409,"AUTO_LIST_READ_FAILED");
   }finally{if(accessible!=null&&Marshal.IsComObject(accessible))Marshal.ReleaseComObject(accessible);}
  }

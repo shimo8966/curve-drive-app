@@ -91,11 +91,12 @@ class JwCheck {
     for(int i=0;i<40&&FindList()!=IntPtr.Zero;i++)Thread.Sleep(50);Activate(filename,done,attempt+1);return;
    }
    a.accSelect(3,match);Write("ACTIVATE selectedState="+a.get_accState(match));
-   if(((int)a.get_accState(match)&2)==0)throw new Exception("Selection not confirmed");
    int left,top,width,height;a.accLocation(out left,out top,out width,out height,match);var point=new Point{x=left+Math.Min(20,width/2),y=top+height/2};Write("ACTIVATE bounds="+left+","+top+","+width+","+height);
    object hit=a.accHitTest(point.x,point.y);if(!(hit is int)||(int)hit!=match)throw new Exception("Hit-test disagrees with exact filename");Rect rect;
    if(!ScreenToClient(list,ref point)||!GetClientRect(list,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom)throw new Exception("Item is outside the list client area");
-   IntPtr position=new IntPtr((point.y<<16)|point.x);SendPointer(list,0x201,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);SendPointer(list,0x203,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);
+   IntPtr position=new IntPtr((point.y<<16)|point.x);SendPointer(list,0x201,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);
+   if(((int)a.get_accState(match)&2)==0||!String.Equals(a.get_accName(match),filename,StringComparison.OrdinalIgnoreCase))throw new Exception("Clicked fixture row is not the exact selected file");
+   SendPointer(list,0x203,new IntPtr(1),position);SendPointer(list,0x202,IntPtr.Zero,position);
   }finally{if(a!=null)Marshal.ReleaseComObject(a);}
   for(int i=0;i<100;i++){if(done()){Thread.Sleep(250);for(int n=0;n<60&&!IsWindowEnabled(main);n++)Thread.Sleep(50);return;}Thread.Sleep(80);}throw new Exception("Fixture macro did not finish: "+filename);
  }
@@ -220,7 +221,7 @@ class JwCheck {
      }
      Thread.Sleep(80);
     }
-    if(!edge.HasExited){edge.Kill();throw new Exception("Plan-only input UI timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Plan-only input UI failed: "+error);
+    if(!edge.HasExited){Screenshot("Plan-timeout-"+mode);edge.Kill();throw new Exception("Plan-only input UI timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0){Screenshot("Plan-failure-"+mode);throw new Exception("Plan-only input UI failed: "+error);}
     link=Shared<CadLink>(folder,"Auto.json");State state=Shared<State>(folder,"State.json");CadContext context=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));
     if(mode=="new"){
      context.ValidatePlan(link);if(context.circles.Count!=2||!state.planOnly||state.station!=0)throw new Exception("Plan-only preparation fabricated a measurement");RequirePlanSegments(context,link);RequireNoMeasuredOrigin(context,link);
@@ -231,14 +232,14 @@ class JwCheck {
      if(!LinePresent(context,link,new Pt{x=.5,y=.015},new Pt{x=1,y=.020}))throw new Exception("Second measurement is not connected to the first actual point");
      var project=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(Path.Combine(folder,"Project.json")));int rows=0;
      foreach(object value in (System.Collections.IEnumerable)project["meas"]){var row=(Dictionary<string,object>)value;string station=Convert.ToString(row["s"],CultureInfo.InvariantCulture);if(String.IsNullOrWhiteSpace(station))continue;rows++;double s=Convert.ToDouble(row["s"],CultureInfo.InvariantCulture),up=Convert.ToDouble(row["up"],CultureInfo.InvariantCulture),depth=Convert.ToDouble(row["depth"],CultureInfo.InvariantCulture);if(s==.5){if(up!=10||depth!=2.3)throw new Exception("First up/depth snapshot differs");}else if(s==1){if(up!=5||depth!=2.4)throw new Exception("Second up/depth snapshot differs");}else throw new Exception("Snapshot contains a fabricated station");}
-     if(rows!=2)throw new Exception("Snapshot lost a real measurement");string latest=File.ReadAllText(Path.Combine(folder,"Latest.dxf"));if(!latest.Contains("-29990.0000000")||!latest.Contains("-29995.0000000"))throw new Exception("Latest DXF omitted the entered vertical offsets");
+     if(rows!=2)throw new Exception("Snapshot lost a real measurement");string latest=File.ReadAllText(Path.Combine(Path.GetDirectoryName(link.drawing),"Latest.dxf"));if(!latest.Contains("-29990.0000000")||!latest.Contains("-29995.0000000"))throw new Exception("Latest DXF omitted the entered vertical offsets");
      Write("NATIVE_PLAN_RESUME_TWO_POINTS_OK .5m/1m, correct sole measured connector, independent up/depth stored in PC JSON and latest DXF");
     }
-    File.Copy(Path.Combine(folder,"AutoInput.txt"),Path.Combine(output,"Plan-"+mode+"-CAD.txt"),true);File.Copy(Path.Combine(folder,"Project.json"),Path.Combine(output,"Plan-"+mode+"-Project.json"),true);File.Copy(Path.Combine(folder,"Latest.dxf"),Path.Combine(output,"Plan-"+mode+"-Latest.dxf"),true);File.Copy(Path.Combine(folder,"Plan-"+mode+".png"),Path.Combine(output,"Plan-"+mode+".png"),true);
+    File.Copy(Path.Combine(folder,"AutoInput.txt"),Path.Combine(output,"Plan-"+mode+"-CAD.txt"),true);File.Copy(Path.Combine(folder,"Project.json"),Path.Combine(output,"Plan-"+mode+"-Project.json"),true);File.Copy(Path.Combine(Path.GetDirectoryName(link.drawing),"Latest.dxf"),Path.Combine(output,"Plan-"+mode+"-Latest.dxf"),true);File.Copy(Path.Combine(folder,"Plan-"+mode+".png"),Path.Combine(output,"Plan-"+mode+".png"),true);
     using(var owned=Process.GetProcessById(link.pid)){owned.Kill();owned.WaitForExit(5000);}Write("NATIVE_PLAN_CAD_CLOSED "+mode);
    }finally{
     if(edge!=null){if(!edge.HasExited)edge.Kill();edge.Dispose();}if(link!=null)try{using(var owned=Process.GetProcessById(link.pid))owned.Kill();}catch{}
-    foreach(string name in new[]{"Import.log","State.json","Auto.json"})if(File.Exists(Path.Combine(folder,name)))File.Copy(Path.Combine(folder,name),Path.Combine(output,"Plan-"+name),true);
+    foreach(string name in new[]{"Import.log","State.json","Auto.json","AutoBatch.log","AutoInput.txt","Project.json","Plan-failure-"+mode+".png","Plan-failure-"+mode+".html"})if(File.Exists(Path.Combine(folder,name)))File.Copy(Path.Combine(folder,name),Path.Combine(output,"Plan-"+name),true);
     if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();
    }
   }

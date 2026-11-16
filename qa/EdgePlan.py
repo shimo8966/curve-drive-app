@@ -18,7 +18,14 @@ with sync_playwright() as p:
         assert restored['meas']==[] and restored['basics']['site']=='CI plan only'
     page.locator('#guidePrimary').click()
     if mode=='new':page.locator('#guidePrimary').click()
-    page.wait_for_function('document.body.dataset.guide==="working" && document.querySelector("#guideTitle").textContent.includes("計画線を保存しました")',timeout=70000)
+    try:
+        page.wait_for_function('document.body.dataset.guide==="working" && document.querySelector("#guideTitle").textContent.includes("計画線を保存しました")',timeout=70000)
+    except Exception:
+        diagnostic=page.evaluate('({phase:document.body.dataset.guide,title:document.querySelector("#guideTitle").textContent,notice:document.querySelector("#guideNotice").textContent,status:document.querySelector("#bridgeStatus").textContent,button:document.querySelector("#guidePrimary").textContent,disabled:document.querySelector("#guidePrimary").disabled})')
+        print('PLAN_READY_FAILURE '+json.dumps(diagnostic,ensure_ascii=True),flush=True)
+        page.screenshot(path=str(folder/('Plan-failure-'+mode+'.png')),full_page=True)
+        (folder/('Plan-failure-'+mode+'.html')).write_text(page.content(),encoding='utf-8')
+        raise
     assert '実測は未登録' in page.locator('#guideTitle').inner_text()
     assert page.locator('[data-meas][data-key="s"]').count()==0
     with page.expect_download() as event:page.locator('#exportDxf').click()
