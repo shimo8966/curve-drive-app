@@ -21,6 +21,9 @@ class JwCheck {
  [StructLayout(LayoutKind.Sequential)]struct Rect{public int left,top,right,bottom;}
  [DllImport("user32.dll")]static extern bool ScreenToClient(IntPtr h,ref Point point);
  [DllImport("user32.dll")]static extern bool GetClientRect(IntPtr h,out Rect rect);
+ [DllImport("user32.dll")]static extern bool GetWindowRect(IntPtr h,out Rect rect);
+ [DllImport("user32.dll")]static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll")]static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
  [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l);
  [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
@@ -128,9 +131,29 @@ class JwCheck {
  }
  static CadLink CalibrateGuide(string folder,string probe){
    CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
-   CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
-   string text="REM Fixture setup - known picked point from real CAD geometry\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
-   File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),text,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});
+   CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string captured=Path.Combine(folder,"AutoInput.txt");if(File.Exists(captured))File.Delete(captured);
+   // Physical mouse input is restricted to this synthetic CI actor. The delivered
+   // application continues to use only verified, control-directed activation.
+   ShowWindow(main,3);SetForegroundWindow(main);Thread.Sleep(500);Rect bounds;GetWindowRect(main,out bounds);
+   int cx=(bounds.left+bounds.right)/2,cy=(bounds.top+bounds.bottom)/2;
+   SetCursorPos(cx,cy);mouse_event(2|8,0,0,0,UIntPtr.Zero);Thread.Sleep(100);SetCursorPos(cx+80,cy-80);Thread.Sleep(150);mouse_event(4|16,0,0,0,UIntPtr.Zero);Thread.Sleep(500);Screenshot("setup-full-view");
+   Activate("Setup_Link.bat",delegate(){return FindList()==IntPtr.Zero;});SetForegroundWindow(main);Thread.Sleep(400);Screenshot("setup-awaiting-point");
+   if(File.Exists(captured)){File.Copy(captured,Path.Combine(output,"Setup-ActualInput.txt"),true);throw new Exception("The delivered setup macro ran before an origin was picked: "+File.ReadAllText(Path.Combine(folder,"Auto.json")));}
+   int best=0,px=-1,py=-1;var screen=Screen.PrimaryScreen.Bounds;
+   using(var bitmap=new Bitmap(screen.Width,screen.Height)){
+    using(var g=Graphics.FromImage(bitmap))g.CopyFromScreen(screen.Left,screen.Top,0,0,screen.Size);
+    for(int y=Math.Max(130,bounds.top+110);y<Math.Min(screen.Height-70,bounds.bottom-40);y++){
+     int count=0,left=-1;for(int x=Math.Max(110,bounds.left+100);x<Math.Min(screen.Width-110,bounds.right-110);x++){Color color=bitmap.GetPixel(x,y);if(color.R>180&&color.G<100&&color.B<100){count++;if(left<0)left=x;}}
+     if(count>best){best=count;px=left;py=y;}
+    }
+   }
+   if(best<100||px<bounds.left+115)throw new Exception("Synthetic plan origin is not fully visible: redPixels="+best+" left="+px);
+   Write("NATIVE_SETUP_RIGHT_CLICK x="+px+" y="+py+" redPixels="+best);SetCursorPos(px,py);mouse_event(8,0,0,0,UIntPtr.Zero);Thread.Sleep(100);mouse_event(16,0,0,0,UIntPtr.Zero);SetCursorPos(px+30,py-30);
+   for(int i=0;i<100&&!File.Exists(captured);i++)Thread.Sleep(100);
+   if(!File.Exists(captured))throw new Exception("The real setup macro did not receive the right-clicked origin");
+   File.Copy(captured,Path.Combine(output,"Setup-ActualInput.txt"),true);CadContext picked=CadContext.Parse(File.ReadAllText(captured,Encoding.GetEncoding(932)));
+   if(picked.picked==null||Math.Abs(picked.picked.x-origin.x)>.05/input.scales[0]||Math.Abs(picked.picked.y-origin.y)>.05/input.scales[0])throw new Exception("The actual right click did not read the synthetic plan origin");
+   Thread.Sleep(1000);Screenshot("setup-after-point");
    link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
    Write("NATIVE_CALIBRATED pid="+link.pid+" actualCAD="+pid+" scale="+link.scale);if(link.pid!=pid)throw new Exception("Calibration bound another process");
    return link;
