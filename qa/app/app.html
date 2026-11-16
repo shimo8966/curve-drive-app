@@ -314,6 +314,8 @@ function sameGuideProject(last){try{return !!last?.hasBaseline&&last.site===brid
 function guideCanResume(){return sameGuideProject(guideLast)&&!!guideLast.automation?.calibrated&&/\.jww$/i.test(guideLast.automation.drawing||'')}
 function guideWorking(){const a=guideLast?.automation;return sameGuideProject(guideLast)&&!!guideInfo?.cadReady&&!!a&&(a.enabled||(a.fieldMode&&a.fieldReady))}
 function guideFingerprint(){return JSON.stringify(validateData(snapshot()))}
+function guideHasFault(){return /^[A-Z][A-Z0-9_]+$/.test(guideLast?.automation?.message||'')}
+function guideCheckFault(){if(guideHasFault()){const err=Error('CADの設定状態を確認してください。');err.code=guideLast.automation.message;err.status=409;throw err}}
 function guideSummary(){try{const m=model();return '<strong>'+esc($('site').value||'現場名を入力')+'</strong>計画 '+metres(m.total)+'m ／ 実測 '+m.mm.length+'点'+(m.mm.length?' ／ 最新 '+metres(m.mm[m.mm.length-1].s)+'m':'')+'<br>'+['S','L','R'].map(type=>({S:'直線',L:'左カーブ',R:'右カーブ'}[type])+' '+m.ss.filter(q=>q.type===type).length+'区間').join('・')}catch{return '下の入力欄で、計画と実測値を確認してください。'}}
 const originDiagram='<svg viewBox="0 0 520 170" role="img" aria-label="赤い計画線の発進点0mを右クリックする模式図"><path d="M48 116 L260 116 Q375 116 474 57" fill="none" stroke="#ff6a6a" stroke-width="4"/><circle cx="48" cy="116" r="9" fill="#ff6a6a"/><path d="M170 107 L232 107" stroke="#58dca6" stroke-width="3"/><circle cx="170" cy="107" r="4" fill="#58dca6"/><circle cx="232" cy="107" r="4" fill="#58dca6"/><text x="26" y="36" fill="white" font-size="18" font-family="sans-serif">この端を右クリック</text><path d="M90 48 L52 97" stroke="white" stroke-width="2"/><text x="22" y="151" fill="white" font-size="15" font-family="sans-serif">発進点 0m</text><text x="282" y="146" fill="#d6e8f3" font-size="12" font-family="sans-serif">模式図：左右ではなく「0m」の端です</text></svg>';
 function renderGuide(){
@@ -362,6 +364,7 @@ function renderGuide(){
   step='入力';title=a?.enabled?'準備できました。入力してEnterです':'確認方式で入力できます';description=a?.enabled?'推進延長 → 左右ズレ → 上下ズレの順に入力します。\n最後の上下欄でEnterを押すと、JW_CADへ反映します。':'最後の上下欄でEnterを押し、JW_CADの「再実行」を一回押します。';primary='次の測点を入力する ↓';$('guideSummary').innerHTML='<span class="modePill">'+(a?.enabled?'自動で反映':'CADの再実行で反映')+'</span> '+esc(a?.drawing||'');
   $('guideSecondary').hidden=false;$('guideSecondary').textContent='入力・図面の設定を見直す';if(!guideWorking()){title='連携が停止しています';description='入力内容は残っています。下のボタンで作業状態を確認してください。';$('guideSummary').innerHTML='<span class="modePill">停止中</span> '+esc(a?.drawing||'');$('guideNotice').textContent=guideError||guideMessage||'入力を送り直さず、作業状態を確認してください。';primary='作業状態を確認する';}
  }
+ if(['origin','pick','resumeLink'].includes(phase)&&guideHasFault()){$('guideNotice').textContent=guideError||guideFailure({code:a.message,status:409});$('guideSecondary').hidden=false;$('guideSecondary').textContent='入力データから新しい作業図面を作る';}
  $('guideStep').textContent=step;$('guideTitle').textContent=title;$('guideDescription').textContent=description;$('guidePrimary').textContent=primary;
  const progress={review:0,open:1,save:2,origin:3,pick:4,working:5}[phase];$('guideProgress').innerHTML=progress===undefined?'':[0,1,2,3,4].map(i=>'<li class="'+(i<progress?'done':i===progress?'current':'')+'" aria-label="準備 '+(i+1)+'"></li>').join('');
 }
@@ -396,7 +399,7 @@ async function guidePrepare(){
  if(guideLast.session!==guideState.session||!sameGuideProject(guideLast))throw Error('作業の登録が変わりました。入力は保持しています。作業状態を確認してください。');if(!guideLast.automation?.prepared)await bridgeRequest('auto/prepare',{session:guideState.session,end:relativePoint(pointAt(m.total,m.ss),m)});guideState.phase='origin';saveGuide();await guideRead();
 }
 async function guideEnable(){
- await guideRead();const a=guideLast.automation;if(!sameGuideProject(guideLast)||!a?.calibrated)throw Error('まだ発進点の登録を確認できません。JW_CADで Setup_Link.bat を選び、0mの発進点を右クリックしてください。');if(!/\.jww$/i.test(a.drawing||''))throw Error('開いている図面がDXFです。作業用のJWW形式で保存し、その図面で発進点を登録してください。');if(guideState.phase==='resumeLink'&&!a.fieldReady)throw Error('まだ再開を確認できません。JW_CADで Field_Run.bat を一回選んでください。');if(guideLast.state==='pending')throw Error('前の測点の反映が残っています。新しい測点を送らず、再開用の案内から前の一点を確認してください。');
+ await guideRead();const a=guideLast.automation;guideCheckFault();if(!sameGuideProject(guideLast)||!a?.calibrated)throw Error('まだ発進点の登録を確認できません。JW_CADで Setup_Link.bat を選び、0mの発進点を右クリックしてください。');if(!/\.jww$/i.test(a.drawing||''))throw Error('開いている図面がDXFです。作業用のJWW形式で保存し、その図面で発進点を登録してください。');if(guideState.phase==='resumeLink'&&!a.fieldReady)throw Error('まだ再開を確認できません。JW_CADで Field_Run.bat を一回選んでください。');if(guideLast.state==='pending')throw Error('前の測点の反映が残っています。新しい測点を送らず、再開用の案内から前の一点を確認してください。');
  await new Promise(resolve=>setTimeout(resolve,300));await bridgeRequest('auto/enable',{});await guideRead();guideSet('working');
 }
 async function guidePrimary(){
