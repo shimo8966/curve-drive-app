@@ -70,9 +70,9 @@ function validateData(raw){
 }
 function applyData(data){segs=data.segs;meas=data.meas;for(const k of basics)$(k).value=data.basics[k]}
 function persist(){try{const data=validateData(snapshot());localStorage.setItem(storageKey,JSON.stringify(data));$('saveStatus').textContent='このブラウザ内に保存しました。重要なデータはバックアップも保存してください。'}catch(e){$('saveStatus').textContent='保存未完了：'+e.message+'。未完成の行は完成するか削除してください。保存先エラーの場合はバックアップを保存してください。'}}
-let recoveryNotice='';
+let recoveryNotice='',loadedStoredData=false;
 for(const key of [storageKey,'curve-drive-v27','curve-drive-v26','curve-drive-v25','curve-drive-v03','curve-drive-v02']){
- try{const text=localStorage.getItem(key);if(!text)continue;const data=validateData(JSON.parse(text));applyData(data);if(recoveryNotice)recoveryNotice+=' 以前の有効な保存データを読み込みました。';break}catch(e){recoveryNotice='不正な保存データを読み込まずに起動しました。元の保存内容は保持しています。'}
+ try{const text=localStorage.getItem(key);if(!text)continue;const data=validateData(JSON.parse(text));applyData(data);loadedStoredData=true;if(recoveryNotice)recoveryNotice+=' 以前の有効な保存データを読み込みました。';break}catch(e){recoveryNotice='不正な保存データを読み込まずに起動しました。元の保存内容は保持しています。'}
 }
 function segRender(){ $('segBody').innerHTML=segs.map((s,i)=>`<tr><td>${i+1}</td><td><select data-section="${i}" data-key="type"><option value="S" ${s.type==='S'?'selected':''}>直線</option><option value="L" ${s.type==='L'?'selected':''}>左カーブ</option><option value="R" ${s.type==='R'?'selected':''}>右カーブ</option></select></td><td><input data-section="${i}" data-key="l" type="number" min="0" step="any" value="${esc(s.l)}"></td><td><input data-section="${i}" data-key="r" type="number" min="0" step="any" ${s.type==='S'?'disabled':''} value="${esc(s.r)}"></td><td><button class="danger" data-del-seg="${i}" aria-label="区間削除">削除</button></td></tr>`).join('')}
 function measRender(){ $('measBody').innerHTML=meas.map((m,i)=>`<tr><td><input type="number" step="any" data-meas="${i}" data-key="s" value="${esc(m.s)}" aria-label="${i+1}行目 推進延長"><span id="alignRow_${i}" class="alignmentRow"></span></td><td><input type="number" step="any" data-meas="${i}" data-key="left" value="${esc(m.left)}" aria-label="${i+1}行目 左右ズレ"></td><td><input type="number" step="any" data-meas="${i}" data-key="up" placeholder="未入力可" value="${esc(m.up)}" aria-label="${i+1}行目 上下ズレ"></td><td><details class="rowTools"><summary>操作</summary><div class="actions"><button class="secondary" data-insert-meas="${i}" title="この行の上に追加">＋上</button><button class="danger" data-del-meas="${i}">削除</button></div></details></td></tr>`).join('')}
@@ -390,6 +390,7 @@ function guideObserve(last){guideLast=last;if(guideLoaded)renderGuide()}
 async function guideRead(){
  if(!['http://127.0.0.1:18718','http://localhost:18718'].includes(location.origin))throw Error('この画面はファイルから開かれています。展開したフォルダーの Open.cmd を開いてください。');
  const info=await bridgeRequest('guide/info');if(info.version!=='3.1'||!info.latest)throw Error('古い連携プログラムです。古い黒い画面を閉じて、今回のOpen.cmdを開いてください。');
+ if(!loadedStoredData&&!localStorage.getItem(storageKey)&&info.latest.automation?.managed){const saved=await bridgeRequest('managed/project');if(saved.project){const restored=validateData(saved.project);applyData(restored);segRender();measRender();preview();persist();loadedStoredData=true;$('saveStatus').textContent='このPCに自動保存した入力を復元しました。';}}
  if(guideState.workId&&guideState.workId!==info.workId)guideState={phase:'welcome'};guideState.workId=info.workId;guideInfo=info;guideLast=info.latest;guideLoaded=true;
  if(['origin','pick','save'].includes(guideState.phase)&&guideState.session&&guideLast.session!==guideState.session){guideState={phase:'welcome',workId:info.workId};guideError='作業の登録が変わりました。現在の作業から続けます。';}
  if(guideWorking()&&['welcome','connection','working','resumeLink','origin','pick'].includes(guideState.phase))guideState.phase='working';else if(guideState.phase==='connection')guideState.phase='welcome';else if(guideState.phase==='working'&&!guideWorking())guideState.phase='welcome';

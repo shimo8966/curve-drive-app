@@ -77,8 +77,10 @@ partial class CadNative {
   }finally{if(accessible!=null&&Marshal.IsComObject(accessible))Marshal.ReleaseComObject(accessible);}
  }
  static string TreeName(IntPtr tree,CadAccessible accessible,IntPtr item){
-  IntPtr id=SendMessage(tree,0x112B,item,IntPtr.Zero);if(id==IntPtr.Zero)return "";
-  try{return accessible.Name(id.ToInt32())??"";}catch{return "";}
+  IntPtr id=SendMessage(tree,0x112B,item,IntPtr.Zero);
+  // Older common-control tree providers use the HTREEITEM as their child ID.
+  if(id!=IntPtr.Zero)try{string text=accessible.Name(id.ToInt32());if(!String.IsNullOrEmpty(text))return text;}catch{}
+  try{return accessible.Name(item.ToInt32())??"";}catch{return "";}
  }
  static IntPtr TreeSibling(IntPtr tree,CadAccessible accessible,IntPtr first,string name){
   IntPtr found=IntPtr.Zero;int matches=0,count=0;
