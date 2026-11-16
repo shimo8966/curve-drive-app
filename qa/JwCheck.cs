@@ -381,15 +381,19 @@ class JwCheck {
    foreach(double station in new[]{10.5,11}){
     double offset=station==10.5?.02:-.02;State previous=Shared<State>(folder,"State.json");
     if(station==10.5){
-     using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeCheck.py")+"\" 10.5 20"){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
-      if(!edge.WaitForExit(60000)){edge.Kill();throw new Exception("Edge Enter test timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Edge Enter failed: "+error);
-     }
+     IntPtr pendingList=FocusStaleMacro(staleName);if(File.Exists(staleMarker))throw new Exception("A single stale-file click invoked the macro");
+     string beforeNarrow=SharedLogText(Path.Combine(folder,"Import.log"));PickerLayout narrow=NarrowPicker(pendingList,link.Macro);
+     try{
+      using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeCheck.py")+"\" 10.5 20"){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
+       if(!edge.WaitForExit(60000)){edge.Kill();throw new Exception("Edge Enter test timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Edge Enter failed: "+error);
+      }
+      RequireNarrowExecution(folder,beforeNarrow);if(File.Exists(staleMarker))throw new Exception("The narrow picker invoked the stale file");Write("NATIVE_NARROW_PICKER_APPLY_OK exact current session was selected through the clipped 180px pane");
+     }catch{Screenshot("narrow-picker-failed");throw;}finally{narrow.Restore();}
     }else{
      Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
      IntPtr pendingList=FocusStaleMacro(staleName);if(File.Exists(staleMarker))throw new Exception("A single stale-file click invoked the macro");
-     string beforeNarrow=SharedLogText(Path.Combine(folder,"Import.log"));PickerLayout narrow=NarrowPicker(pendingList,link.Macro);ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER_WITH_STALE_FOCUS");
-     try{string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);RequireNarrowExecution(folder,beforeNarrow);Write("NATIVE_NARROW_PICKER_APPLY_OK exact current session was selected through the clipped 180px pane");}
-     catch{Screenshot("narrow-picker-failed");throw;}finally{narrow.Restore();}
+     ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER_WITH_STALE_FOCUS");
+     string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);
      if(File.Exists(staleMarker))throw new Exception("Production activation invoked the stale token rather than the exact current session file");
      Write("NATIVE_STALE_FOCUS_REPLACED_OK current session callback issued; stale file never executed");
     }Thread.Sleep(350);
