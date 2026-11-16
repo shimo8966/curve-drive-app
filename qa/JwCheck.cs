@@ -23,6 +23,9 @@ class JwCheck {
  [DllImport("user32.dll")]static extern bool ScreenToClient(IntPtr h,ref Point point);
  [DllImport("user32.dll")]static extern bool GetClientRect(IntPtr h,out Rect rect);
  [DllImport("user32.dll")]static extern bool GetWindowRect(IntPtr h,out Rect rect);
+ [DllImport("user32.dll")]static extern bool MoveWindow(IntPtr h,int x,int y,int width,int height,bool repaint);
+ [DllImport("user32.dll")]static extern int GetScrollPos(IntPtr h,int bar);
+ [DllImport("user32.dll")]static extern uint GetDpiForWindow(IntPtr h);
  [DllImport("user32.dll")]static extern bool SetCursorPos(int x,int y);
  [DllImport("user32.dll")]static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
@@ -122,6 +125,55 @@ class JwCheck {
  }
  static bool SharedLogContains(string filename,string text){
   try{using(var stream=new FileStream(filename,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))using(var reader=new StreamReader(stream))return reader.ReadToEnd().Contains(text);}catch(IOException){return false;}
+ }
+ static string SharedLogText(string filename){
+  for(int attempt=0;attempt<20;attempt++)try{using(var stream=new FileStream(filename,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))using(var reader=new StreamReader(stream))return reader.ReadToEnd();}catch(IOException){Thread.Sleep(50);}
+  throw new Exception("Cannot read the fixture import trace");
+ }
+ static void RequireNarrowExecution(string folder,string before){
+  string after=SharedLogText(Path.Combine(folder,"Import.log"));if(!after.StartsWith(before,StringComparison.Ordinal))throw new Exception("Import trace was replaced during the narrow picker test");string delta=after.Substring(before.Length);
+  File.WriteAllText(Path.Combine(output,"Narrow-Import-delta.log"),delta,new UTF8Encoding(false));
+  if(delta.Contains("AUTO_UI_REOPEN_PICKER_BEFORE_ACTION"))throw new Exception("The narrow picker was bypassed by reopening a wider picker");
+  bool narrowClick=false;foreach(string line in delta.Split(new[]{'\r','\n'},StringSplitOptions.RemoveEmptyEntries))if(line.Contains("AUTO_UI_CLICK_POINT "))foreach(string field in line.Split(' '))if(field.StartsWith("width=",StringComparison.Ordinal)){int width;if(Int32.TryParse(field.Substring(6),out width)&&width>0&&width<=180)narrowClick=true;}
+  if(!narrowClick)throw new Exception("The product did not confirm a click within the actual narrow viewport");
+  if(!delta.Contains("AUTO_UI_DPI_SCOPE target-window")||!delta.Contains("AUTO_UI_DPI_RESTORED")||delta.Contains("AUTO_UI_DPI_RESTORE_FAILED"))throw new Exception("Target DPI context was not entered and restored during the native click");
+  Write("NATIVE_NARROW_DIRECT_PICKER_OK no picker reopen; product click viewport <=180px; target DPI context entered and restored");
+ }
+ sealed class PickerLayout {
+  public IntPtr list,tree,parent;public Rect listBounds,treeBounds;public int columnWidth,scroll;
+  public void Restore(){
+   MoveWindow(tree,treeBounds.left,treeBounds.top,treeBounds.right-treeBounds.left,treeBounds.bottom-treeBounds.top,true);
+   MoveWindow(list,listBounds.left,listBounds.top,listBounds.right-listBounds.left,listBounds.bottom-listBounds.top,true);
+   SendPointer(list,0x101E,IntPtr.Zero,new IntPtr(columnWidth));int current=GetScrollPos(list,0);SendPointer(list,0x1014,new IntPtr(scroll-current),IntPtr.Zero);
+  }
+ }
+ static Rect ChildBounds(IntPtr parent,IntPtr child){
+  Rect rect;if(!GetWindowRect(child,out rect))throw new Exception("Cannot read synthetic picker control bounds");
+  var first=new Point{x=rect.left,y=rect.top};var last=new Point{x=rect.right,y=rect.bottom};
+  if(!ScreenToClient(parent,ref first)||!ScreenToClient(parent,ref last))throw new Exception("Cannot map synthetic picker control bounds");
+  return new Rect{left=first.x,top=first.y,right=last.x,bottom=last.y};
+ }
+ static PickerLayout NarrowPicker(IntPtr list,string filename){
+  var layout=new PickerLayout{list=list,parent=GetAncestor(list,2)};layout.tree=GetDlgItem(layout.parent,1775);
+  if(Kind(list)!="SysListView32"||Kind(layout.tree)!="SysTreeView32")throw new Exception("Narrow fixture requires the actual JW picker controls");
+  layout.listBounds=ChildBounds(layout.parent,list);layout.treeBounds=ChildBounds(layout.parent,layout.tree);layout.columnWidth=SendPointer(list,0x101D,IntPtr.Zero,IntPtr.Zero).ToInt32();layout.scroll=GetScrollPos(list,0);
+  Rect parentBounds;if(!GetClientRect(layout.parent,out parentBounds))throw new Exception("Narrow fixture cannot read the picker client area");
+  int left=parentBounds.right-188,top=layout.listBounds.top,height=layout.listBounds.bottom-top;
+  if(left-layout.treeBounds.left<300||height<100)throw new Exception("Narrow fixture picker is too small to model the split");
+  if(!MoveWindow(layout.tree,layout.treeBounds.left,layout.treeBounds.top,left-layout.treeBounds.left-8,layout.treeBounds.bottom-layout.treeBounds.top,true)||!MoveWindow(list,left,top,180,height,true))throw new Exception("Cannot arrange the synthetic narrow picker");
+  SendPointer(list,0x101E,IntPtr.Zero,new IntPtr(400));SendPointer(list,0x1014,new IntPtr(60-GetScrollPos(list,0)),IntPtr.Zero);Thread.Sleep(200);
+  Rect client;if(!GetClientRect(list,out client)||client.right>180||client.right<100||GetScrollPos(list,0)!=60)throw new Exception("Narrow picker width or horizontal clipping was not applied");
+  Guid iid=typeof(IAccessible).GUID;IAccessible a=null;
+  try{
+   if(AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a)!=0||a==null)throw new Exception("Narrow fixture cannot read the accessible file list");
+   int match=0,hits=0;for(int i=1;i<=a.accChildCount;i++){string name;try{name=a.get_accName(i);}catch(ArgumentException){continue;}if(String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)){match=i;hits++;}}
+   if(hits!=1)throw new Exception("Narrow picker lost the full exact session filename");
+   int x,y,width,itemHeight;a.accLocation(out x,out y,out width,out itemHeight,match);var p=new Point{x=x,y=y};if(!ScreenToClient(list,ref p))throw new Exception("Narrow fixture cannot map the accessible item");
+   if(p.x>=0||p.x+width<=0)throw new Exception("The narrow fixture must leave the exact row partly visible with its left edge clipped");
+   int legacyX=p.x+Math.Min(20,width/2);if(legacyX>=0&&legacyX<client.right)throw new Exception("Narrow fixture does not expose the old left-plus20 coordinate defect");
+   Write("NATIVE_NARROW_LEGACY_POINT_OUTSIDE x="+legacyX+" visibleClient=0.."+client.right+"; a rebuilt picker may still let the old full workflow recover");
+   Write("NATIVE_NARROW_PICKER_READY client="+client.right+"x"+client.bottom+" scroll="+GetScrollPos(list,0)+" itemClient="+p.x+","+p.y+","+width+","+itemHeight+" fullName="+a.get_accName(match)+" dpi="+GetDpiForWindow(list));Screenshot("narrow-picker-before-action");return layout;
+  }finally{if(a!=null)Marshal.ReleaseComObject(a);}
  }
  static void CheckDrawing(CadContext c,CadLink link,Pt point,int expectedCircles){
   c.Validate(link,point);if(c.circles.Count!=expectedCircles)throw new Exception("Unexpected circle count: "+c.circles.Count);
@@ -334,8 +386,10 @@ class JwCheck {
      }
     }else{
      Call("point",new{site="CI fixture",planKey=StraightKey,session=session,station=station,previousStation=previous.station,p=new{x=station,y=offset},q=previous.p,offsetMm=offset*1000});
-     IntPtr pendingList=FocusStaleMacro(staleName);if(File.Exists(staleMarker))throw new Exception("A single stale-file click invoked the macro");ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER_WITH_STALE_FOCUS");
-     string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);
+     IntPtr pendingList=FocusStaleMacro(staleName);if(File.Exists(staleMarker))throw new Exception("A single stale-file click invoked the macro");
+     string beforeNarrow=SharedLogText(Path.Combine(folder,"Import.log"));PickerLayout narrow=NarrowPicker(pendingList,link.Macro);ShowWindow(GetParent(pendingList),6);Write("NATIVE_PREOPEN_MINIMIZED_PICKER_WITH_STALE_FOCUS");
+     try{string result=Call("auto/apply",new{session=session,station=station});Write("NATIVE_AUTO_APPLY "+result);RequireNarrowExecution(folder,beforeNarrow);Write("NATIVE_NARROW_PICKER_APPLY_OK exact current session was selected through the clipped 180px pane");}
+     catch{Screenshot("narrow-picker-failed");throw;}finally{narrow.Restore();}
      if(File.Exists(staleMarker))throw new Exception("Production activation invoked the stale token rather than the exact current session file");
      Write("NATIVE_STALE_FOCUS_REPLACED_OK current session callback issued; stale file never executed");
     }Thread.Sleep(350);
@@ -396,7 +450,7 @@ class JwCheck {
    string folder=Path.GetDirectoryName(args[0]),input=Path.Combine(folder,"Fixture.dxf"),probe=Path.Combine(folder,"ProbeIn.txt");if(!File.Exists(input))File.WriteAllText(input,Dxf(),Encoding.ASCII);
    File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM Read-only fixture probe\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
    string nativeInput=Path.Combine(folder,"Fixture.jww");bool seeded=File.Exists(nativeInput);cadExe=args[0];LaunchCad(seeded?nativeInput:input);Thread.Sleep(200);Screenshot("drawing");bool saved=seeded||SaveJww(folder);Write("SAVE_JWW "+saved+" nativeSeed="+seeded);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");
-   if(args.Length>2&&args[2]=="--stale-check"){NativeApplication(folder,probe);Write("STALE_FIXTURE_SUCCESS true");return 0;}
+   if(args.Length>2&&(args[2]=="--stale-check"||args[2]=="--narrow-check")){NativeApplication(folder,probe);Write("STALE_FIXTURE_SUCCESS true");return 0;}
    PlanApplication(folder);ManagedApplication(folder);bool success=false;
    foreach(string mode in new[]{"standard","legacy","minimized"}){
     if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");

@@ -130,6 +130,17 @@ class CadIdentity {
 interface CadListReader {
  int Count();string Name(int child);int Role(int child);int State(int child);string DefaultAction(int child);void Invoke(int child);
 }
+// Coordinates are client pixels in one DPI context. Only the visible part of
+// the exact file row may be clicked, including narrow or horizontally scrolled lists.
+class CadClickGeometry {
+ public static bool TryVisiblePoint(int left,int top,int width,int height,int clientWidth,int clientHeight,out int x,out int y){
+  x=0;y=0;if(width<=0||height<=0||clientWidth<=0||clientHeight<=0)return false;
+  long l=Math.Max(0L,left),t=Math.Max(0L,top),r=Math.Min((long)clientWidth,(long)left+width),b=Math.Min((long)clientHeight,(long)top+height);
+  if(l>=r||t>=b)return false;
+  long px=l+Math.Min(20L,(r-l-1)/2),py=t+(b-t-1)/2;
+  if(px>32767||py>32767)return false;x=(int)px;y=(int)py;return true;
+ }
+}
 class CadListChoice {
  public static void WaitSelected(Func<string> readName,Func<int> readState,string expected,Action pause,int attempts){
   for(int i=0;i<attempts;i++){
@@ -175,6 +186,30 @@ class CadListChoice {
  }
 }
 partial class CadNative {
+ sealed class DpiCoordinateScope:IDisposable {
+  readonly IntPtr previous,window;readonly bool mapsPhysical;readonly Action<string> trace;
+  [DllImport("user32.dll",SetLastError=true)]static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")]static extern IntPtr GetWindowDpiAwarenessContext(IntPtr window);
+  [DllImport("user32.dll",SetLastError=true)]static extern bool PhysicalToLogicalPointForPerMonitorDPI(IntPtr window,ref ClickPoint point);
+  [DllImport("user32.dll",SetLastError=true)]static extern bool LogicalToPhysicalPointForPerMonitorDPI(IntPtr window,ref ClickPoint point);
+  public DpiCoordinateScope(IntPtr target,Action<string> log){
+   window=target;trace=log;
+   try{
+    IntPtr targetContext=GetWindowDpiAwarenessContext(window);
+    if(targetContext==IntPtr.Zero)throw new Fault(409,"AUTO_DPI_COORDINATES_UNAVAILABLE");
+    previous=SetThreadDpiAwarenessContext(targetContext);
+    if(previous==IntPtr.Zero)throw new Fault(409,"AUTO_DPI_COORDINATES_UNAVAILABLE");
+    mapsPhysical=true;trace("AUTO_UI_DPI_SCOPE target-window");
+   }catch(EntryPointNotFoundException){trace("AUTO_UI_DPI_SCOPE legacy-api-unavailable");}
+   catch(DllNotFoundException){trace("AUTO_UI_DPI_SCOPE legacy-api-unavailable");}
+  }
+  // MSAA reports physical screen pixels. Window messages consume the target
+  // window's logical client pixels, including a system-aware window scaled on
+  // a second monitor. Never infer that conversion from one global scale factor.
+  public void ToNativeScreen(ref ClickPoint point){if(mapsPhysical&&!PhysicalToLogicalPointForPerMonitorDPI(window,ref point))throw new Fault(409,"AUTO_DPI_COORDINATES_UNAVAILABLE");}
+  public void ToPhysicalScreen(ref ClickPoint point){if(mapsPhysical&&!LogicalToPhysicalPointForPerMonitorDPI(window,ref point))throw new Fault(409,"AUTO_DPI_COORDINATES_UNAVAILABLE");}
+  public void Dispose(){if(previous==IntPtr.Zero)return;if(SetThreadDpiAwarenessContext(previous)==IntPtr.Zero)trace("AUTO_UI_DPI_RESTORE_FAILED");else trace("AUTO_UI_DPI_RESTORED");}
+ }
  sealed class ListReader:CadListReader {
   readonly CadAccessible accessible;
   readonly IntPtr window;readonly string filename;readonly Action<string> trace;
@@ -184,7 +219,8 @@ partial class CadNative {
   public int Role(int child){object value=accessible.Role(child);return value is int?(int)value:-1;}
   public int State(int child){object value=accessible.State(child);if(!(value is int))throw new Fault(409,"AUTO_LIST_READ_FAILED");return (int)value;}
   public string DefaultAction(int child){return accessible.DefaultAction(child);}
-  public void Invoke(int child){
+  public void Invoke(int child){using(var dpi=new DpiCoordinateScope(window,trace))InvokeCore(child,dpi);}
+  void InvokeCore(int child,DpiCoordinateScope dpi){
    // Control-directed activation avoids the unsupported MSAA default action. No global mouse input.
    var kind=new StringBuilder(256);GetClassName(window,kind,kind.Capacity);
    if(kind.ToString()!="SysListView32"||!IsWindowVisible(window)||!IsWindowEnabled(window))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
@@ -197,9 +233,18 @@ partial class CadNative {
    string name=Name(child);if(!String.Equals(name,filename,StringComparison.OrdinalIgnoreCase)&&!String.Equals(name,Path.GetFileNameWithoutExtension(filename),StringComparison.OrdinalIgnoreCase))throw new Fault(409,"AUTO_ITEM_CHANGED");
    int left,top,width,height;accessible.Location(out left,out top,out width,out height,child);
    if(width<=0||height<=0)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
-   var point=new ClickPoint{x=left+Math.Min(20,width/2),y=top+height/2};object hit=accessible.HitTest(point.x,point.y);
+   long right=(long)left+width,bottom=(long)top+height;if(right>Int32.MaxValue||bottom>Int32.MaxValue)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   var origin=new ClickPoint{x=left,y=top};var extent=new ClickPoint{x=(int)right,y=(int)bottom};ClickRect rect;int x,y;
+   dpi.ToNativeScreen(ref origin);dpi.ToNativeScreen(ref extent);
+   if(!ScreenToClient(window,ref origin)||!ScreenToClient(window,ref extent)||!GetClientRect(window,out rect))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   long nativeWidth=(long)extent.x-origin.x,nativeHeight=(long)extent.y-origin.y;
+   if(nativeWidth>Int32.MaxValue||nativeHeight>Int32.MaxValue||nativeWidth<=0||nativeHeight<=0||!CadClickGeometry.TryVisiblePoint(origin.x,origin.y,(int)nativeWidth,(int)nativeHeight,rect.right,rect.bottom,out x,out y))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   var point=new ClickPoint{x=x,y=y};var screenPoint=point;
+   if(!ClientToScreen(window,ref screenPoint))throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   dpi.ToPhysicalScreen(ref screenPoint);
+   object hit=accessible.HitTest(screenPoint.x,screenPoint.y);
    if(!(hit is int)||(int)hit!=child)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
-   ClickRect rect;if(!ScreenToClient(window,ref point)||!GetClientRect(window,out rect)||point.x<0||point.y<0||point.x>=rect.right||point.y>=rect.bottom||point.x>32767||point.y>32767)throw new Fault(409,"AUTO_ITEM_NOT_CLICKABLE");
+   trace("AUTO_UI_CLICK_POINT x="+x+" y="+y+" width="+rect.right+" height="+rect.bottom);
    IntPtr position=new IntPtr((point.y<<16)|point.x);
    // A selected MSAA row is not necessarily Jw_cad's current executable.
    // Deliver the first click to its own handler before the double-click.
@@ -215,6 +260,7 @@ partial class CadNative {
  [StructLayout(LayoutKind.Sequential)]struct ClickPoint{public int x,y;}
  [StructLayout(LayoutKind.Sequential)]struct ClickRect{public int left,top,right,bottom;}
  [DllImport("user32.dll")]static extern bool ScreenToClient(IntPtr h,ref ClickPoint point);
+ [DllImport("user32.dll")]static extern bool ClientToScreen(IntPtr h,ref ClickPoint point);
  [DllImport("user32.dll")]static extern bool GetClientRect(IntPtr h,out ClickRect rect);
  delegate bool Callback(IntPtr h,IntPtr p);
  [DllImport("user32.dll")] static extern bool EnumWindows(Callback callback,IntPtr p);

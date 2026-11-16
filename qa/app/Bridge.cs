@@ -32,7 +32,7 @@ class Fault : Exception {
     public Fault(int status, string code) : base(code) { Status = status; }
 }
 partial class Program {
-    const string AppVersion="3.1a";
+    const string AppVersion="3.1b";
     static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string StatePath = Path.Combine(Root, "State.json");
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
@@ -285,7 +285,7 @@ partial class Program {
         var listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:18718/");
         try {listener.Start();}
         catch(Exception e) {Console.Error.WriteLine("Cannot start bridge: "+e.Message);return 1;}
-        Console.WriteLine("CurveDrive Bridge v3.1a http://127.0.0.1:18718/ (local only)");
+        Console.WriteLine("CurveDrive Bridge v3.1b http://127.0.0.1:18718/ (local only)");
         Console.WriteLine("Folder: "+Root+" | CAD drawing is not acknowledged.");
         if (open) {
             try {System.Diagnostics.Process.Start("microsoft-edge:http://127.0.0.1:18718/");}

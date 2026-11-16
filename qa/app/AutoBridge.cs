@@ -55,7 +55,7 @@ partial class Program {
  }
  static string AutoMacro(CadLink a,bool setup){return LinkMacro(a,setup?"--setup":"--auto",setup);}
  static string LinkMacro(CadLink a,string action,bool setup){
-  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.1a - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
+  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.1b - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
   if(setup)rows.Add("REM #1 Select PLAN START once (R)Read");
   rows.AddRange(new string[]{"REM #e","@echo off","setlocal EnableExtensions DisableDelayedExpansion","set \"TARGET=%~dp0JWC_TEMP.TXT\"","if not exist \"%TARGET%\" exit /b 1","copy /y \"%TARGET%\" \"%~dp0AutoInput.txt\" >nul","\"%~dp0Bridge.exe\" "+action+" \"%TARGET%\" "+a.token+" >> \"%~dp0AutoBatch.log\" 2>&1","if errorlevel 1 goto failed","exit /b 0",":failed","findstr /b /c:\"heCurveDrive:\" \"%TARGET%\" >nul 2>&1","if not errorlevel 1 exit /b 1","> \"%TARGET%\" echo heCurveDrive: link stopped. See Import.log.","exit /b 1"});
   return String.Join("\r\n",rows.ToArray())+"\r\n";
