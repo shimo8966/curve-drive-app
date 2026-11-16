@@ -5,6 +5,30 @@ using System.Net;
 using System.Threading;
 
 partial class Program {
+ static bool GuideRoute(HttpListenerContext ctx,string method,string path){
+  if(path!="/guide/info"&&path!="/guide/folder")return false;
+  string origin=ctx.Request.Headers["Origin"];
+  if(method=="GET"&&path=="/guide/info"){
+   if(!OriginAllowed(origin))throw new Fault(403,"ORIGIN_NOT_ALLOWED");
+   using(Lock()){
+    State s=Load();CadLink a=AutoLoad(s);bool ready=false;string code=null;
+    // This is an identity check for the guide. A BAT may temporarily disable the main window.
+    // Actual enable/execute/callback paths retain their existing operation and geometry guards.
+    if(a!=null&&a.calibrated){try{CadNative.Find(a,true);ready=true;}catch(Fault e){code=e.Message;}}
+    Reply(ctx,200,new{ok=true,version=AppVersion,workId=WorkId(),folder=Root,cadReady=ready,cadCode=code,latest=Latest(s)});
+   }return true;
+  }
+  if(method=="POST"&&path=="/guide/folder"){
+   if(origin!="http://127.0.0.1:18718"&&origin!="http://localhost:18718")throw new Fault(403,"AUTO_USE_LOCAL_PAGE");
+   var body=Body(ctx);string file=Text(Field(body,"file"),16);string name;
+   if(file=="setup")name="Setup_Link.bat";else if(file=="run")name="Field_Run.bat";else throw new Fault(400,"GUIDE_FILE_INVALID");
+   string target=Path.Combine(Root,name);if(!File.Exists(target))throw new Fault(409,"GUIDE_FILE_NOT_READY");
+   if(Environment.OSVersion.Platform!=PlatformID.Win32NT)throw new Fault(501,"AUTO_WINDOWS_ONLY");
+   System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe","/select,\""+target+"\""){UseShellExecute=true});
+   Reply(ctx,200,new{ok=true,file=name});return true;
+  }
+  throw new Fault(404,"NOT_FOUND");
+ }
  static void AutoTrace(string text){try{Log(text);}catch{}}
  static readonly string AutoPath=Path.Combine(Root,"Auto.json");
  static CadLink AutoLoad(State s){
@@ -29,7 +53,7 @@ partial class Program {
  }
  static string AutoMacro(CadLink a,bool setup){return LinkMacro(a,setup?"--setup":"--auto",setup);}
  static string LinkMacro(CadLink a,string action,bool setup){
-  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v2.9a - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
+  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.0 - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
   if(setup)rows.Add("REM #1 Select PLAN START once (R)Read");
   rows.AddRange(new string[]{"REM #e","@echo off","setlocal EnableExtensions DisableDelayedExpansion","set \"TARGET=%~dp0JWC_TEMP.TXT\"","if not exist \"%TARGET%\" exit /b 1","copy /y \"%TARGET%\" \"%~dp0AutoInput.txt\" >nul","\"%~dp0Bridge.exe\" "+action+" \"%TARGET%\" "+a.token+" >> \"%~dp0AutoBatch.log\" 2>&1","if errorlevel 1 goto failed","exit /b 0",":failed","findstr /b /c:\"heCurveDrive:\" \"%TARGET%\" >nul 2>&1","if not errorlevel 1 exit /b 1","> \"%TARGET%\" echo heCurveDrive: link stopped. See Import.log.","exit /b 1"});
   return String.Join("\r\n",rows.ToArray())+"\r\n";

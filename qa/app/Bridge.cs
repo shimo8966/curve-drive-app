@@ -30,7 +30,7 @@ class Fault : Exception {
     public Fault(int status, string code) : base(code) { Status = status; }
 }
 partial class Program {
-    const string AppVersion="2.9a";
+    const string AppVersion="3.0";
     static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string StatePath = Path.Combine(Root, "State.json");
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
@@ -227,6 +227,7 @@ partial class Program {
         }
         if (method=="GET" && path=="/health") { Reply(ctx,200,new {ok=true,version=AppVersion,workId=WorkId(),cadAutomation=false});return; }
         if (method=="GET" && path=="/latest") { using(Lock()) {Reply(ctx,200,Latest(Load()));}return; }
+        if (GuideRoute(ctx,method,path)) return;
         if (AutoRoute(ctx,method,path)) return;
         if (method=="POST" && path=="/baseline") { Baseline(ctx,Body(ctx));return; }
         if (method=="POST" && path=="/point") { Receive(ctx,Body(ctx));return; }
@@ -278,7 +279,7 @@ partial class Program {
         var listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:18718/");
         try {listener.Start();}
         catch(Exception e) {Console.Error.WriteLine("Cannot start bridge: "+e.Message);return 1;}
-        Console.WriteLine("CurveDrive Bridge v2.9a http://127.0.0.1:18718/ (local only)");
+        Console.WriteLine("CurveDrive Bridge v3.0 http://127.0.0.1:18718/ (local only)");
         Console.WriteLine("Folder: "+Root+" | CAD drawing is not acknowledged.");
         if (open) {
             try {System.Diagnostics.Process.Start("microsoft-edge:http://127.0.0.1:18718/");}

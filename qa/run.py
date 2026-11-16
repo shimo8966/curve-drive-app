@@ -31,6 +31,7 @@ exe = next(cad.rglob('Jw_win.exe'))
 for name in ('Bridge.cs','AutoBridge.cs','CadContext.cs','CadNative.cs','app.html'):
     shutil.copy2(root / 'qa/app' / name,exe.parent/name)
 shutil.copy2(root / 'qa/EdgeCheck.py',exe.parent/'EdgeCheck.py')
+shutil.copy2(root / 'qa/EdgeGuide.py',exe.parent/'EdgeGuide.py')
 subprocess.run([sys.executable,'-m','pip','install','--disable-pip-version-check','playwright==1.56.0'],check=True,timeout=120)
 csc_dir = Path(os.environ['SystemRoot']) / 'Microsoft.NET/Framework64/v4.0.30319'
 csc = csc_dir / 'csc.exe'
@@ -45,4 +46,4 @@ if release == '825a':
     # The runner's English locale breaks v8's Japanese default Save-As name.
     # Use our own v700 synthetic JWW, saved by the official v10 executable.
     shutil.copy2(root / 'qa/Fixture.jww', exe.parent / 'Fixture.jww')
-subprocess.run([str(scratch / 'JwCheck.exe'), str(exe), str(out)], check=True, timeout=180)
+subprocess.run([str(scratch / 'JwCheck.exe'), str(exe), str(out)], check=True, timeout=300)

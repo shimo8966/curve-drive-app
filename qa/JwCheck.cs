@@ -126,6 +126,33 @@ class JwCheck {
    File.Copy(probe,Path.Combine(output,"Curve-after.txt"),true);Write("NATIVE_CURVE_APPLICATION_OK left and right curves, independent centre-based coordinates, 0.05mm tolerance, original plan retained");
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();File.Copy(Path.Combine(folder,"Import.log"),Path.Combine(output,"Curve-Import.log"),true);}
  }
+ static CadLink CalibrateGuide(string folder,string probe){
+   CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));
+   CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string tag=Path.Combine(folder,"SetupDone.tag");if(File.Exists(tag))File.Delete(tag);
+   string text="REM Fixture setup - known picked point from real CAD geometry\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\n>> \"%~dp0JWC_TEMP.TXT\" echo hp1 "+Num(origin.x)+" "+Num(origin.y)+"\r\n\"%~dp0Bridge.exe\" --setup \"%~dp0JWC_TEMP.TXT\" "+link.token+" >> \"%~dp0Setup.log\" 2>&1\r\ntype nul > \"%~dp0SetupDone.tag\"\r\nexit /b 0\r\n";
+   File.WriteAllText(Path.Combine(folder,"Setup_CI.bat"),text,Encoding.ASCII);Activate("Setup_CI.bat",delegate(){return File.Exists(tag);});
+   link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));if(!link.calibrated)throw new Exception("Native calibration failed: "+File.ReadAllText(Path.Combine(folder,"JWC_TEMP.TXT")));
+   Write("NATIVE_CALIBRATED pid="+link.pid+" actualCAD="+pid+" scale="+link.scale);if(link.pid!=pid)throw new Exception("Calibration bound another process");
+   return link;
+ }
+ static Process StartGuide(string folder,string mode){return Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeGuide.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true});}
+ static void GuideWait(Process edge,string marker){
+  for(int i=0;i<600;i++){if(File.Exists(marker))return;if(edge.HasExited)throw new Exception("Guide exited early: "+edge.StandardOutput.ReadToEnd()+edge.StandardError.ReadToEnd());Thread.Sleep(100);}throw new Exception("Guide setup did not reach the CAD step");
+ }
+ static void GuideFinish(Process edge){if(!edge.WaitForExit(80000)){edge.Kill();throw new Exception("Guide did not complete");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Guide failed: "+error);}
+ static void GuidedApplication(string folder,string probe){
+  string original=ReadDrawing(probe).drawing;Process bridge=LaunchBridge(folder),edge=null;string marker=Path.Combine(folder,"GuideReady.tag");if(File.Exists(marker))File.Delete(marker);
+  try{edge=StartGuide(folder,"new");GuideWait(edge,marker);CadLink link=CalibrateGuide(folder,probe);GuideFinish(edge);CheckDrawing(ReadDrawing(probe),link,new Pt{x=10.5,y=.02},2);Write("NATIVE_GUIDED_NEW_GEOMETRY_OK");}
+  finally{if(edge!=null){if(!edge.HasExited)edge.Kill();edge.Dispose();}if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();}
+  cad.Kill();cad.WaitForExit(5000);cad.Dispose();LaunchCad(original);
+ }
+ static void GuidedResume(string folder,string probe){
+  CadLink link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));string drawing=link.drawing;DateTime before=File.GetLastWriteTimeUtc(drawing);PostMessage(main,0x111,new IntPtr(57603),IntPtr.Zero);
+  for(int i=0;i<60&&File.GetLastWriteTimeUtc(drawing)<=before;i++)Thread.Sleep(100);if(File.GetLastWriteTimeUtc(drawing)<=before)throw new Exception("Guide resume fixture was not saved");cad.Kill();cad.WaitForExit(5000);cad.Dispose();LaunchCad(drawing);
+  Process bridge=LaunchBridge(folder),edge=null;string marker=Path.Combine(folder,"ResumeReady.tag");if(File.Exists(marker))File.Delete(marker);
+  try{edge=StartGuide(folder,"resume");GuideWait(edge,marker);Activate("Field_Run.bat",delegate(){var current=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));return current.fieldReady&&current.pid==pid;});GuideFinish(edge);link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));CheckDrawing(ReadDrawing(probe),link,new Pt{x=12,y=-.01},5);Write("NATIVE_GUIDED_RESUME_GEOMETRY_OK");}
+  finally{if(edge!=null){if(!edge.HasExited)edge.Kill();edge.Dispose();}if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();}
+ }
  static void NativeApplication(string folder,string probe){
   Process bridge=LaunchBridge(folder);
   try{
@@ -212,7 +239,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   NativeApplication(folder,probe);CurveApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }
