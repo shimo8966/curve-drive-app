@@ -166,18 +166,37 @@ class JwCheck {
    File.Copy(probe,Path.Combine(output,"Curve-after.txt"),true);Write("NATIVE_CURVE_APPLICATION_OK left and right curves, independent centre-based coordinates, 0.05mm tolerance, original plan retained");
   }finally{if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();File.Copy(Path.Combine(folder,"Import.log"),Path.Combine(output,"Curve-Import.log"),true);}
  }
+ static IntPtr ExposeSyntheticCad(out Rect bounds){
+  bounds=new Rect();string expectedTitle=Title(main);uint actorThread=GetCurrentThreadId();
+  for(int attempt=0;attempt<25;attempt++){
+   uint owner;uint targetThread=GetWindowThreadProcessId(main,out owner);
+   if(owner!=(uint)pid||cad==null||cad.Id!=pid||cad.HasExited||Title(main)!=expectedTitle||GetAncestor(main,2)!=main)throw new Exception("Synthetic CAD identity changed before physical fixture input");
+   uint ignored;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out ignored);
+   bool joinedForeground=foregroundThread!=0&&foregroundThread!=actorThread&&AttachThreadInput(actorThread,foregroundThread,true);
+   bool joinedTarget=targetThread!=0&&targetThread!=actorThread&&targetThread!=foregroundThread&&AttachThreadInput(actorThread,targetThread,true);
+   try{ShowWindow(main,3);BringWindowToTop(main);SetForegroundWindow(main);}
+   finally{if(joinedTarget)AttachThreadInput(actorThread,targetThread,false);if(joinedForeground)AttachThreadInput(actorThread,foregroundThread,false);}
+   Thread.Sleep(160);GetWindowRect(main,out bounds);var point=new Point{x=(bounds.left+bounds.right)/2,y=(bounds.top+bounds.bottom)/2};
+   IntPtr canvas=WindowFromPoint(point);GetWindowThreadProcessId(canvas,out owner);
+   if(owner==(uint)pid&&GetAncestor(canvas,2)==main&&GetAncestor(GetForegroundWindow(),2)==main){
+    // Explorer from the guide's Folder button can finish navigating and raise
+    // itself after the first activation request. Require stable target ownership.
+    Thread.Sleep(200);IntPtr stable=WindowFromPoint(point);GetWindowThreadProcessId(stable,out owner);
+    if(owner==(uint)pid&&GetAncestor(stable,2)==main&&GetAncestor(GetForegroundWindow(),2)==main){Write("SYNTHETIC_CAD_CANVAS_READY attempt="+attempt);return stable;}
+   }
+   Write("SYNTHETIC_CAD_REACQUIRE attempt="+attempt+" foregroundClass="+Kind(GetForegroundWindow()));
+  }
+  throw new Exception("The synthetic CAD canvas remains obscured; refusing physical input");
+ }
  static CadLink CalibrateGuide(string folder,string probe){
    CadLink link=Shared<CadLink>(folder,"Auto.json");
    CadContext input=ReadDrawing(probe);Pt origin=input.ends[0];string captured=Path.Combine(folder,"AutoInput.txt");if(File.Exists(captured))File.Delete(captured);
    // Physical mouse input is restricted to this synthetic CI actor. The delivered
    // application continues to use only verified, control-directed activation.
    Activate("Setup_Link.bat",delegate(){return FindList()==IntPtr.Zero;});
-   uint unused;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out unused),actorThread=GetCurrentThreadId();
-   bool attached=foregroundThread!=actorThread&&AttachThreadInput(actorThread,foregroundThread,true);
-   try{ShowWindow(main,3);BringWindowToTop(main);SetForegroundWindow(main);}finally{if(attached)AttachThreadInput(actorThread,foregroundThread,false);}
-   Thread.Sleep(500);Rect bounds;GetWindowRect(main,out bounds);
+   Rect bounds;IntPtr canvas=ExposeSyntheticCad(out bounds);
    int cx=(bounds.left+bounds.right)/2,cy=(bounds.top+bounds.bottom)/2;
-   IntPtr canvas=WindowFromPoint(new Point{x=cx,y=cy});uint owner;GetWindowThreadProcessId(canvas,out owner);if(owner!=(uint)pid)throw new Exception("The synthetic CAD canvas is obscured; refusing physical input");
+   uint owner;GetWindowThreadProcessId(WindowFromPoint(new Point{x=cx,y=cy}),out owner);if(owner!=(uint)pid)throw new Exception("The synthetic CAD canvas is obscured; refusing physical input");
    SetCursorPos(cx,cy);mouse_event(2|8,0,0,0,UIntPtr.Zero);Thread.Sleep(100);SetCursorPos(cx+80,cy-80);Thread.Sleep(150);mouse_event(4|16,0,0,0,UIntPtr.Zero);Thread.Sleep(500);Screenshot("setup-full-view");
    Thread.Sleep(400);Screenshot("setup-awaiting-point");GetWindowRect(canvas,out bounds);Write("SYNTHETIC_CANVAS "+Kind(canvas)+" bounds="+bounds.left+","+bounds.top+","+bounds.right+","+bounds.bottom);
    if(File.Exists(captured)){File.Copy(captured,Path.Combine(output,"Setup-ActualInput.txt"),true);throw new Exception("The delivered setup macro ran before an origin was picked: "+File.ReadAllText(Path.Combine(folder,"Auto.json")));}

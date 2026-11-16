@@ -133,11 +133,11 @@ function dxf(m){
 }
 
 
-$('exportDxf').onclick=()=>{try{let m=model();if(m.total/m.pitch>20000)throw Error('作図点が多すぎます。間隔を広げてください');saveFile(fileName()+'_v30_mm.dxf',dxf(m),'application/dxf');$('status').className='ok';$('status').textContent='DXFの書き出しを開始しました。保存後、JW_CADでテスト用図面として開いてください。'}catch(e){$('status').className='error';$('status').textContent=e.message}};
+$('exportDxf').onclick=()=>{try{let m=model();if(m.total/m.pitch>20000)throw Error('作図点が多すぎます。間隔を広げてください');saveFile(fileName()+'_v31a_mm.dxf',dxf(m),'application/dxf');$('status').className='ok';$('status').textContent='DXFの書き出しを開始しました。保存後、JW_CADでテスト用図面として開いてください。'}catch(e){$('status').className='error';$('status').textContent=e.message}};
 $('exportCsv').onclick=()=>{try{const data=validateData(snapshot());const withDepth=data.meas.some(m=>String(m.depth??'').trim()!=='');const rows=[['推進延長_m','左右ズレ_mm_左正','上下ズレ_mm_上正',...(withDepth?['深さ_m']:[])],...data.meas.filter(m=>String(m.s).trim()).map(m=>[m.s,m.left,m.up,...(withDepth?[m.depth??'']:[])])];saveFile(fileName()+'_Meas.csv','\ufeff'+rows.map(r=>r.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(',')).join('\r\n'),'text/csv;charset=utf-8');$('status').className='ok';$('status').textContent='CSVの書き出しを開始しました。'}catch(err){$('status').className='error';$('status').textContent='CSVを作成できません：'+err.message+'。未完成の行を完成するか削除し、入力内容を確認してください。'}};
 $('exportJson').onclick=()=>{try{const data=validateData(snapshot());saveFile(fileName()+'_Data.json',JSON.stringify(data,null,2),'application/json');$('status').className='ok';$('status').textContent='バックアップの書き出しを開始しました。'}catch(err){$('status').className='error';$('status').textContent='バックアップを作成できません：'+err.message+'。未完成の行を完成するか削除し、入力内容を確認してください。'}};
 $('importJson').onclick=()=>$('jsonFile').click();
-$('jsonFile').onchange=async e=>{try{if(!e.target.files[0])return;const data=validateData(JSON.parse(await e.target.files[0].text()));applyData(data);segRender();measRender();refresh()}catch(err){alert('復元できません：'+err.message+'。現在のデータは変更していません。')}finally{e.target.value=''}};
+$('jsonFile').onchange=async e=>{try{if(!e.target.files[0])return;const data=validateData(JSON.parse(await e.target.files[0].text()));const active=['working','launch'].includes(guideState.phase);applyData(data);segRender();measRender();if(active){guideSet('review');guideError='入力を復元しました。下の青いボタンで、新しい作業図面を準備してください。';}refresh()}catch(err){alert('復元できません：'+err.message+'。現在のデータは変更していません。')}finally{e.target.value=''}};
 function parseCSV(text){
  const rows=[];let row=[],field='',quoted=false,closed=false;
  const pushRow=()=>{row.push(field);rows.push(row);row=[];field='';closed=false};
@@ -156,7 +156,7 @@ $('csvFile').onchange=async e=>{try{
  const rows=parseCSV(txt).filter(r=>r.some(v=>v.trim()!==''));if(!rows.length)throw Error('CSVが空です');
  const header=rows[0][0].trim();const start=['推進延長_m','推進延長','station','s'].includes(header)?1:0;
  const mm=rows.slice(start).map(r=>{if(r.length<2||r.length>4)throw Error('CSVは延長・左右ズレ・上下ズレ・深さの2〜4列にしてください');return{s:r[0],left:r[1],up:r[2]||'',...(r.length===4?{depth:r[3]}:{})}});
- if(!mm.length)throw Error('実測データがありません');const data=validateData({...snapshot(),meas:mm});applyData(data);measRender();refresh();
+ if(!mm.length)throw Error('実測データがありません');const data=validateData({...snapshot(),meas:mm});const active=['working','launch'].includes(guideState.phase);applyData(data);measRender();if(active){guideSet('review');guideError='実測データを置き換えました。下の青いボタンで、新しい作業図面を準備してください。';}refresh();
  }catch(err){alert('CSV読込エラー：'+err.message+'。現在のデータは変更していません。')}finally{e.target.value=''}};
 
 // Local bridge: explicit baseline, then a single pending point. CAD drawing is not acknowledged.
