@@ -280,7 +280,7 @@ class JwCheck {
    string folder=Path.GetDirectoryName(args[0]),input=Path.Combine(folder,"Fixture.dxf"),probe=Path.Combine(folder,"ProbeIn.txt");if(!File.Exists(input))File.WriteAllText(input,Dxf(),Encoding.ASCII);
    File.WriteAllText(Path.Combine(folder,"Probe_Run.bat"),"REM Read-only fixture probe\r\nREM #jww\r\nREM #cd\r\nREM #hf\r\nREM #h4\r\nREM #hp\r\nREM #bz\r\nREM #zs\r\nREM #e\r\n@echo off\r\ncopy /y \"%~dp0JWC_TEMP.TXT\" \"%~dp0ProbeIn.txt\" >nul\r\n> \"%~dp0JWC_TEMP.TXT\" echo h#Fixture read only.\r\nexit /b 0\r\n",Encoding.ASCII);
    string nativeInput=Path.Combine(folder,"Fixture.jww");bool seeded=File.Exists(nativeInput);cadExe=args[0];LaunchCad(seeded?nativeInput:input);Thread.Sleep(200);Screenshot("drawing");bool saved=seeded||SaveJww(folder);Write("SAVE_JWW "+saved+" nativeSeed="+seeded);if(!saved)throw new Exception("Saving the synthetic JWW fixture failed");
-   bool success=false;
+   ManagedApplication(folder);bool success=false;
    foreach(string mode in new[]{"standard","legacy","minimized"}){
     if(File.Exists(probe))File.Delete(probe);IntPtr list=Open();Thread.Sleep(600);Screenshot("list-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),6);Thread.Sleep(200);}Guid iid=typeof(IAccessible).GUID;IAccessible a=null;int hr=AccessibleObjectFromWindow(list,unchecked((uint)-4),ref iid,out a);Write("OBJECT hr=0x"+hr.ToString("X8")+" mode="+mode);if(hr!=0||a==null)throw new Exception("No accessible list");
     int match=0;for(int i=1;i<=a.accChildCount;i++){try{string name=a.get_accName(i);Write("ITEM "+i+" name="+name+" role="+a.get_accRole(i)+" state="+a.get_accState(i)+" action="+a.get_accDefaultAction(i));if(name=="Probe_Run.bat"||name=="Probe_Run")match=i;}catch(Exception e){Write("ITEM "+i+" "+Error(e));}}
@@ -294,7 +294,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);ManagedApplication(folder);Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }

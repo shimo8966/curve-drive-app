@@ -61,11 +61,15 @@ partial class CadNative {
   Guid iid=typeof(CadAccessible).GUID;CadAccessible accessible=null;
   try{
    int hr=AccessibleObjectFromWindow(tree,unchecked((uint)-4),ref iid,out accessible);if(hr!=0||accessible==null)throw new Fault(409,"MANAGED_FOLDER_CONTROL_NOT_FOUND");
+   trace("MANAGED_TREE_OBJECT children="+accessible.Count());
+   for(int n=1;n<=Math.Min(30,accessible.Count());n++)try{trace("MANAGED_TREE_CHILD "+n+" "+accessible.Name(n));}catch{}
    IntPtr root=SendMessage(tree,0x110A,IntPtr.Zero,IntPtr.Zero),item=TreeDrive(tree,accessible,root,drive,0);
+   trace("MANAGED_TREE_DRIVE root="+root+" rootName="+TreeName(tree,accessible,root)+" found="+item);
    if(item==IntPtr.Zero)throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");
    string tail=folder.Substring(Path.GetPathRoot(folder).Length);foreach(string part in tail.Split(new char[]{Path.DirectorySeparatorChar},StringSplitOptions.RemoveEmptyEntries)){
     SendMessage(tree,0x1102,new IntPtr(2),item);IntPtr child=IntPtr.Zero;
     for(int attempt=0;attempt<20;attempt++){child=TreeSibling(tree,accessible,SendMessage(tree,0x110A,new IntPtr(4),item),part);if(child!=IntPtr.Zero)break;Thread.Sleep(50);}
+    trace("MANAGED_TREE_PART "+part+" found="+child);
     if(child==IntPtr.Zero)throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");item=child;
    }
    trace("MANAGED_FOLDER_SELECT");SendMessage(tree,0x110B,new IntPtr(9),item);

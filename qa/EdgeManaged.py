@@ -21,7 +21,8 @@ with sync_playwright() as p:
         assert 'JW_CADを自動で準備' in page.locator('#guidePrimary').inner_text()
         page.locator('#guidePrimary').click()
     try:
-        page.wait_for_function('document.querySelector("#guideTitle").textContent.includes("準備できました")',timeout=70000)
+        page.wait_for_function('document.querySelector("#guideTitle").textContent.includes("準備できました") || (!document.querySelector("#guidePrimary").disabled && document.querySelector("#guideNotice").textContent.trim())',timeout=70000)
+        assert '準備できました' in page.locator('#guideTitle').inner_text(),ascii(page.locator('#guideNotice').inner_text())
     except Exception:
         print(ascii(page.locator('#guideNotice').inner_text()),flush=True)
         page.screenshot(path=str(folder/'Managed-failure.png'))
