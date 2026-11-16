@@ -170,6 +170,27 @@ class JwCheck {
    return link;
  }
  static Process StartGuide(string folder,string mode){return Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeGuide.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true});}
+ static void ManagedApplication(string source){
+  string folder=Path.Combine(source,"Curve Drive");Directory.CreateDirectory(folder);
+  foreach(string name in new[]{"Bridge.exe","app.html","EdgeManaged.py"})File.Copy(Path.Combine(source,name),Path.Combine(folder,name),true);
+  Process bridge=LaunchBridge(folder);CadLink link=null;
+  try{
+   foreach(string mode in new[]{"new","resume"}){
+    using(var edge=Process.Start(new ProcessStartInfo("python","\""+Path.Combine(folder,"EdgeManaged.py")+"\" "+mode){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=folder,RedirectStandardOutput=true,RedirectStandardError=true})){
+     if(!edge.WaitForExit(120000)){edge.Kill();throw new Exception("Input-only managed flow timed out");}Write(edge.StandardOutput.ReadToEnd());string error=edge.StandardError.ReadToEnd();if(edge.ExitCode!=0)throw new Exception("Input-only managed flow failed: "+error);
+    }
+    link=json.Deserialize<CadLink>(File.ReadAllText(Path.Combine(folder,"Auto.json")));State state=json.Deserialize<State>(File.ReadAllText(Path.Combine(folder,"State.json")));
+    CadContext context=CadContext.Parse(File.ReadAllText(Path.Combine(folder,"AutoInput.txt"),Encoding.GetEncoding(932)));CheckDrawing(context,link,state.p,mode=="new"?4:5);
+    if(!link.managed||link.verifiedStation!=state.station)throw new Exception("Managed geometry was not verified");
+    File.Copy(Path.Combine(folder,"AutoInput.txt"),Path.Combine(output,"Managed-"+mode+"-CAD.txt"),true);File.Copy(Path.Combine(folder,"Import.log"),Path.Combine(output,"Managed-Import.log"),true);Write("NATIVE_MANAGED_"+mode.ToUpperInvariant()+"_OK input screen only; no fixture CAD action");
+    using(var owned=Process.GetProcessById(link.pid)){owned.Kill();owned.WaitForExit(5000);}
+   }
+  }finally{
+   foreach(string name in new[]{"Import.log","Auto.json","State.json","AutoInput.txt","Project.json"})if(File.Exists(Path.Combine(folder,name)))File.Copy(Path.Combine(folder,name),Path.Combine(output,"Managed-"+name),true);
+   if(link!=null)try{using(var owned=Process.GetProcessById(link.pid))owned.Kill();}catch{}
+   if(!bridge.HasExited)bridge.Kill();bridge.WaitForExit(5000);bridge.Dispose();
+  }
+ }
  static void GuideWait(Process edge,string marker){
   for(int i=0;i<600;i++){if(File.Exists(marker))return;if(edge.HasExited)throw new Exception("Guide exited early: "+edge.StandardOutput.ReadToEnd()+edge.StandardError.ReadToEnd());Thread.Sleep(100);}throw new Exception("Guide setup did not reach the CAD step");
  }
@@ -273,7 +294,7 @@ class JwCheck {
     finally{Marshal.ReleaseComObject(a);}
     bool ran=WaitFile(probe);Write("RESULT mode="+mode+" macroRan="+ran);success=success||ran;if(ran)File.Copy(probe,Path.Combine(output,"Input-"+mode+".txt"),true);Screenshot("after-"+mode);if(mode=="minimized"){ShowWindow(GetParent(list),9);Thread.Sleep(200);}
    }
-   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);Write("FIXTURE_SUCCESS "+success);return success?0:1;
+   GuidedApplication(folder,probe);NativeApplication(folder,probe);GuidedResume(folder,probe);CurveApplication(folder,probe);ManagedApplication(folder);Write("FIXTURE_SUCCESS "+success);return success?0:1;
   }catch(Exception e){Write("FATAL "+e);Screenshot("failure");return 1;}
   finally{if(cad!=null){try{cad.Kill();cad.WaitForExit(5000);}catch{}cad.Dispose();}log.Dispose();}
  }

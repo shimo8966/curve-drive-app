@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Net;
@@ -48,12 +49,12 @@ partial class Program {
   if(File.Exists(AutoPath))File.Replace(tmp,AutoPath,AutoPath+".bak");else File.Move(tmp,AutoPath);
  }
  static object AutoSummary(State s){
-  try{CadLink a=AutoLoad(s);return new {prepared=a!=null,calibrated=a!=null&&a.calibrated,enabled=a!=null&&a.enabled,fieldMode=a!=null&&a.fieldMode,fieldReady=a!=null&&a.fieldReady,drawing=a!=null&&a.calibrated?Path.GetFileName(a.drawing):null,message=a==null?"未設定":a.message};}
+  try{CadLink a=AutoLoad(s);return new {prepared=a!=null,calibrated=a!=null&&a.calibrated,managed=a!=null&&a.managed,verified=a!=null&&a.managed&&a.verifiedStation.HasValue&&Near(a.verifiedStation.Value,s.station),enabled=a!=null&&a.enabled,fieldMode=a!=null&&a.fieldMode,fieldReady=a!=null&&a.fieldReady,drawing=a!=null&&a.calibrated?Path.GetFileName(a.drawing):null,message=a==null?"未設定":a.message};}
   catch(Fault){return new {prepared=false,calibrated=false,enabled=false,message="自動設定を読み込めません。新しいDXFで再設定してください。"};}
  }
  static string AutoMacro(CadLink a,bool setup){return LinkMacro(a,setup?"--setup":"--auto",setup);}
  static string LinkMacro(CadLink a,string action,bool setup){
-  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.0 - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
+  var rows=new System.Collections.Generic.List<string>(new string[]{"REM CurveDrive v3.1 - CAD LINK - NO DELETE","REM #jww","REM #cd","REM #hf","REM #h4","REM #hp","REM #bz","REM #zs"});
   if(setup)rows.Add("REM #1 Select PLAN START once (R)Read");
   rows.AddRange(new string[]{"REM #e","@echo off","setlocal EnableExtensions DisableDelayedExpansion","set \"TARGET=%~dp0JWC_TEMP.TXT\"","if not exist \"%TARGET%\" exit /b 1","copy /y \"%TARGET%\" \"%~dp0AutoInput.txt\" >nul","\"%~dp0Bridge.exe\" "+action+" \"%TARGET%\" "+a.token+" >> \"%~dp0AutoBatch.log\" 2>&1","if errorlevel 1 goto failed","exit /b 0",":failed","findstr /b /c:\"heCurveDrive:\" \"%TARGET%\" >nul 2>&1","if not errorlevel 1 exit /b 1","> \"%TARGET%\" echo heCurveDrive: link stopped. See Import.log.","exit /b 1"});
   return String.Join("\r\n",rows.ToArray())+"\r\n";
@@ -107,7 +108,7 @@ partial class Program {
      State current=Load();CadLink link=AutoLoad(current);
      if(current==null||current.session!=initial.session||link==null||link.token!=a.token||!link.enabled)throw new Fault(409,"AUTO_STOPPED_CHECK_STATUS");
      return Near(current.station,initial.station)&&current.state=="issued";
-    }},AutoTrace);}catch(Exception e){AutoTrace("AUTO_UI_ERROR step=execute type="+e.GetType().FullName+" HRESULT=0x"+e.HResult.ToString("X8"));failure=e;}
+    }},AutoTrace);if(a.managed)ManagedCheck(a,initial);}catch(Exception e){AutoTrace("AUTO_UI_ERROR step=execute type="+e.GetType().FullName+" HRESULT=0x"+e.HResult.ToString("X8"));failure=e;}
    });
    if(Environment.OSVersion.Platform==PlatformID.Win32NT)worker.SetApartmentState(ApartmentState.STA);
    worker.IsBackground=true;worker.Start();
@@ -117,7 +118,7 @@ partial class Program {
     using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(current!=null&&current.token==a.token){current.enabled=false;current.message=failure is Fault?failure.Message:"AUTO_WINDOWS_OPERATION_FAILED";AutoSave(current);}}
     throw new Fault(409,failure is Fault?failure.Message:"AUTO_WINDOWS_OPERATION_FAILED");
    }
-   Reply(ctx,200,new {ok=true,state="issued",cadVerified=false});return true;
+   Reply(ctx,200,new {ok=true,state="issued",cadVerified=a.managed});return true;
   }
   throw new Fault(404,"NOT_FOUND");
  }
@@ -137,7 +138,18 @@ partial class Program {
    using(Lock()){
     State s=Load();CadLink a=AutoLoad(s);
     if(s==null||a==null||a.token!=token)throw new Fault(409,"AUTO_SESSION_CHANGED");
-    if(action=="--setup"){
+    if(a.managed&&!a.calibrated&&action=="--auto"){
+     if(s.state=="pending"||!CadNative.ManagedPath(a)||!String.Equals(context.drawing,a.drawing,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"MANAGED_DRAWING_MISMATCH");
+     var window=CadNative.FindSetup(context.drawing);if(window.pid!=a.pid||window.started!=a.started)throw new Fault(409,"CAD_PROCESS_CHANGED");
+     Pt origin=context.ManagedOrigin(a);a.x=origin.x;a.y=origin.y;a.group=context.group;a.scale=context.scales[0];a.width=context.width;a.height=context.height;
+     context.Validate(a,s.p);a.calibrated=true;a.enabled=true;a.verifiedStation=s.station;a.message="作業図面と実測終点を確認済み。入力できます。";AutoSave(a);
+     File.WriteAllText(target,"h#CurveDrive: work drawing ready. Return to input.\r\n",Encoding.ASCII);
+    }else if(action=="--verify"){
+     if(!a.managed||!a.calibrated||!a.enabled)throw new Fault(409,"AUTO_NO_PENDING_OR_DISABLED");
+     CadNative.FindCallback(a);context.Validate(a,s.p);if(s.state!="ready")context.RequireMeasuredLine(a,s.q,s.p);
+     a.verifiedStation=s.station;a.checkedNonce=a.checkNonce;a.message="CADの実測点と線を確認済み。";AutoSave(a);
+     File.WriteAllText(target,"h#CurveDrive: measured point and line verified.\r\n",Encoding.ASCII);
+    }else if(action=="--setup"){
      if(s.state=="pending"||context.picked==null)throw new Fault(409,"AUTO_SETUP_NEEDS_BASELINE_AND_ORIGIN");
      var window=CadNative.FindSetup(context.drawing);
      a.drawing=context.drawing;a.x=context.picked.x;a.y=context.picked.y;a.group=context.group;a.scale=context.scales[a.group];a.width=context.width;a.height=context.height;a.pid=window.pid;a.started=window.started;
@@ -172,5 +184,73 @@ partial class Program {
    try{using(Lock()){State s=Load();CadLink a=AutoLoad(s);if(a!=null){a.enabled=false;a.fieldReady=false;a.message=code;AutoSave(a);}}}catch{}
    try{Log("AUTO_ERROR "+code+" "+e.GetType().Name+" "+e.Message);}catch{}Console.Error.WriteLine(code);return 2;
   }
+ }
+}
+
+// Managed drawings are created only under this app's Work folder. Every start
+// uses a new file; the user's existing CAD drawings are never opened or changed.
+partial class Program {
+ static string ManagedWork(CadLink a){
+  if(a==null||!a.managed)throw new Fault(409,"MANAGED_WORK_REQUIRED");Guid id;
+  if(!Guid.TryParseExact(a.session,"N",out id))throw new Fault(409,"MANAGED_WORK_REQUIRED");
+  return Path.Combine(Root,"Work",a.session);
+ }
+ static void ManagedWrite(string file,string content){
+  string tmp=file+".tmp";File.WriteAllText(tmp,content,Utf8);
+  if(File.Exists(file))File.Replace(tmp,file,file+".bak");else File.Move(tmp,file);
+ }
+ static void ManagedSnapshot(CadLink a,Dictionary<string,object> d){
+  string project=Json.Serialize(Map(Field(d,"project"))),drawing=Text(Field(d,"dxf"),8000000);
+  if(project.Length>1000000||drawing.IndexOf('\0')>=0||!drawing.Contains("AC1009")||!drawing.Contains("CD_ORIGIN")||!drawing.Contains("CD_END")||!drawing.TrimEnd().EndsWith("EOF",StringComparison.Ordinal))throw new Fault(400,"MANAGED_DATA_INVALID");
+  string folder=ManagedWork(a);Directory.CreateDirectory(folder);
+  ManagedWrite(Path.Combine(folder,"Latest.dxf"),drawing);ManagedWrite(Path.Combine(folder,"Project.json"),project);
+  ManagedWrite(Path.Combine(Root,"Project.json"),project);
+ }
+ static bool ManagedVerified(State s){CadLink a=AutoLoad(s);return a!=null&&a.managed&&a.verifiedStation.HasValue&&Near(a.verifiedStation.Value,s.station);}
+ static void ManagedCheck(CadLink a,State expected){
+  string nonce=Guid.NewGuid().ToString("N");
+  using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(s==null||s.session!=expected.session||!Near(s.station,expected.station)||current==null||!current.enabled)throw new Fault(409,"AUTO_STOPPED_CHECK_STATUS");current.checkNonce=nonce;AutoSave(current);}
+  File.WriteAllText(Path.Combine(Root,a.CheckMacro),LinkMacro(a,"--verify",false),Encoding.ASCII);
+  CadNative.ExecuteFile(a,a.CheckMacro,delegate(){using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(s==null||s.session!=expected.session||current==null||!current.enabled)throw new Fault(409,"AUTO_STOPPED_CHECK_STATUS");return current.checkedNonce==nonce&&current.verifiedStation.HasValue&&Near(current.verifiedStation.Value,expected.station);}},AutoTrace);
+ }
+ static void ManagedConnect(CadLink a){
+  try{CadNative.Find(a,false);}catch(Fault e){
+   if(e.Message!="CAD_PROCESS_CHANGED"&&e.Message!="AUTO_CAD_PROCESS_UNREADABLE"&&e.Message!="AUTO_CAD_WINDOW_NOT_FOUND")throw;
+   var window=CadNative.StartManaged(a.drawing);a.pid=window.pid;a.started=window.started;a.calibrated=false;a.enabled=false;
+   using(Lock()){AutoSave(a);}
+  }
+  if(a.calibrated&&a.enabled)return;
+  a.calibrated=false;a.enabled=false;a.verifiedStation=null;
+  using(Lock()){AutoSave(a);}
+  File.WriteAllText(Path.Combine(Root,a.Macro),LinkMacro(a,"--auto",false),Encoding.ASCII);
+  CadNative.Execute(a,delegate(){using(Lock()){State s=Load();CadLink current=AutoLoad(s);if(s==null||s.session!=a.session||current==null||current.token!=a.token)throw new Fault(409,"AUTO_SESSION_CHANGED");if(current.message!=null&&current.message.StartsWith("MANAGED_",StringComparison.Ordinal))throw new Fault(409,current.message);return current.calibrated&&current.enabled;}},AutoTrace);
+ }
+ static bool ManagedRoute(HttpListenerContext ctx,string method,string path){
+  if(method=="GET"&&path=="/managed/project"){
+   string file=Path.Combine(Root,"Project.json");Reply(ctx,200,new{ok=true,project=File.Exists(file)?Json.DeserializeObject(File.ReadAllText(file,Utf8)):null});return true;
+  }
+  if(method!="POST"||(path!="/managed/start"&&path!="/managed/point"))return false;
+  string origin=ctx.Request.Headers["Origin"];if(origin!="http://127.0.0.1:18718"&&origin!="http://localhost:18718")throw new Fault(403,"AUTO_USE_LOCAL_PAGE");
+  var d=Body(ctx,8388608);if(path=="/managed/point"){Receive(ctx,d);return true;}
+  if(Environment.OSVersion.Platform!=PlatformID.Win32NT)throw new Fault(501,"AUTO_WINDOWS_ONLY");
+  string requestId=Text(Field(d,"requestId"),32);Guid requestGuid;if(!Guid.TryParseExact(requestId,"N",out requestGuid))throw new Fault(400,"MANAGED_REQUEST_INVALID");
+  string site=Text(Field(d,"site"),120),plan=Text(Field(d,"planKey"),16000),project=Json.Serialize(Map(Field(d,"project")));double station=Station(Field(d,"station"));Pt point=Point(Field(d,"p")),end=Point(Field(d,"end"));
+  CadLink a;State state;
+  using(Lock()){
+   state=Load();a=AutoLoad(state);string receipt=Path.Combine(Root,"ManagedRequest.json");Dictionary<string,object> prior=File.Exists(receipt)?Map(Json.DeserializeObject(File.ReadAllText(receipt,Utf8))):null;
+   if(prior!=null&&Text(Field(prior,"requestId"),32)==requestId){
+    if(a==null||!a.managed||Text(Field(prior,"session"),32)!=a.session||Text(Field(prior,"project"),1000000)!=project||state.site!=site||state.planKey!=plan||!Near(state.station,station)||!Same(state.p,point))throw new Fault(409,"MANAGED_REQUEST_CHANGED");
+   }else{
+    string session=Guid.NewGuid().ToString("N");a=new CadLink{schema=1,session=session,token=Guid.NewGuid().ToString("N"),managed=true,end=end,message="JW_CADを自動で準備中"};
+    ManagedSnapshot(a,d);string folder=ManagedWork(a);a.drawing=Path.Combine(folder,"Plan_"+session.Substring(0,12)+".dxf");File.Copy(Path.Combine(folder,"Latest.dxf"),a.drawing,false);
+    if(state!=null){string history=Path.Combine(Root,"History");Directory.CreateDirectory(history);File.Copy(StatePath,Path.Combine(history,state.session+"_"+Guid.NewGuid().ToString("N")+".json"),false);}
+    state=new State{schema=4,session=session,site=site,planKey=plan,state="ready",station=station,previousStation=station,p=point,q=point,saved=Now()};Save(state);AutoSave(a);
+    ManagedWrite(receipt,Json.Serialize(new{requestId=requestId,session=session,project=project}));
+   }
+  }
+  Exception failure=null;var worker=new Thread(delegate(){try{ManagedConnect(a);}catch(Exception e){failure=e;}});worker.SetApartmentState(ApartmentState.STA);worker.IsBackground=true;worker.Start();
+  if(!worker.Join(45000))failure=new Fault(409,"MANAGED_START_RESULT_UNKNOWN");
+  if(failure!=null){using(Lock()){State current=Load();CadLink stopped=AutoLoad(current);if(stopped!=null&&stopped.token==a.token){stopped.enabled=false;stopped.message=failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED";AutoSave(stopped);}}throw new Fault(409,failure is Fault?failure.Message:"MANAGED_WINDOWS_OPERATION_FAILED");}
+  using(Lock()){Reply(ctx,200,Latest(Load()));}return true;
  }
 }

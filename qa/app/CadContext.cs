@@ -9,6 +9,10 @@ class CadLink {
  public string token {get;set;}
  public Pt end {get;set;}
  public bool calibrated {get;set;}
+ public bool managed {get;set;}
+ public string checkNonce {get;set;}
+ public string checkedNonce {get;set;}
+ public double? verifiedStation {get;set;}
  public bool enabled {get;set;}
  public bool fieldMode {get;set;}
  public bool fieldReady {get;set;}
@@ -23,6 +27,7 @@ class CadLink {
  public double height {get;set;}
  public string message {get;set;}
  public string Macro {get{return "Auto_"+token.Substring(0,12)+".bat";}}
+ public string CheckMacro {get{return "Auto_"+token.Substring(12,12)+".bat";}}
 }
 class CadContext {
  public string drawing;
@@ -56,6 +61,17 @@ class CadContext {
  }
  public static Pt Paper(CadLink link,Pt relative){return new Pt{x=link.x+relative.x*1000/link.scale,y=link.y+relative.y*1000/link.scale};}
  public static Pt Real(CadLink link,Pt relative){return new Pt{x=link.x*link.scale+relative.x*1000,y=link.y*link.scale+relative.y*1000};}
+ public Pt ManagedOrigin(CadLink link){
+  Pt found=null;int matches=0;double scale=scales[0];
+  foreach(var first in circles)if(Math.Abs(first[2]-47/scale)<.005/scale)
+   foreach(var last in circles)if(Math.Abs(last[2]-71/scale)<.005/scale&&Math.Abs(last[0]-first[0]-link.end.x*1000/scale)<.05/scale&&Math.Abs(last[1]-first[1]-link.end.y*1000/scale)<.05/scale){found=new Pt{x=first[0],y=first[1]};matches++;}
+  if(matches!=1)throw new Fault(409,"MANAGED_ORIGIN_MARKERS_MISMATCH");return found;
+ }
+ public void RequireMeasuredLine(CadLink link,Pt first,Pt last){
+  Pt p=Paper(link,first),q=Paper(link,last);
+  for(int i=0;i+1<ends.Count;i+=2)if(Same(ends[i].x,p.x,link)&&Same(ends[i].y,p.y,link)&&Same(ends[i+1].x,q.x,link)&&Same(ends[i+1].y,q.y,link))return;
+  throw new Fault(409,"MANAGED_MEASURED_LINE_NOT_FOUND");
+ }
  bool Same(double a,double b,CadLink link){return Math.Abs(a-b)<=.05/link.scale;}
  bool HasEnd(Pt p,CadLink link){foreach(var q in ends)if(Same(q.x,p.x,link)&&Same(q.y,p.y,link))return true;return false;}
  public void Validate(CadLink link,Pt previous){

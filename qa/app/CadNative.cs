@@ -31,6 +31,37 @@ interface CadAccessible {
  void SetName([MarshalAs(UnmanagedType.Struct)]object child,[MarshalAs(UnmanagedType.BStr)]string name);
  void SetValue([MarshalAs(UnmanagedType.Struct)]object child,[MarshalAs(UnmanagedType.BStr)]string value);
 }
+
+partial class CadNative {
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern bool SetWindowText(IntPtr h,string text);
+ public static bool ManagedPath(CadLink a){return a!=null&&a.managed&&!String.IsNullOrEmpty(a.drawing)&&Path.GetFullPath(a.drawing).StartsWith(Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"Work"))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);}
+ static bool CadExecutable(string path){return !String.IsNullOrEmpty(path)&&String.Equals(Path.GetFileName(path),"Jw_win.exe",StringComparison.OrdinalIgnoreCase)&&File.Exists(path);}
+ static string CadExe(){
+  string cache=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"CadPath.txt"),found=null;
+  foreach(var process in WinProcess.GetProcessesByName("Jw_win"))using(process){try{string path=process.MainModule.FileName;if(CadExecutable(path)){if(found!=null&&!String.Equals(path,found,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"MANAGED_JWCAD_VERSION_AMBIGUOUS");found=path;}}catch(Fault){throw;}catch{}}
+  if(found==null&&File.Exists(cache)){string path=File.ReadAllText(cache).Trim();if(CadExecutable(path))found=path;}
+  if(found==null)foreach(string path in new[]{@"C:\JWW\Jw_win.exe",@"C:\Jw_cad\Jw_win.exe",Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"Jw_cad","Jw_win.exe")})if(CadExecutable(path)){found=path;break;}
+  if(found==null)try{using(var extension=Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(".jww")){string type=extension==null?null:extension.GetValue(null) as string;if(type!=null)using(var command=Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(type+@"\shell\open\command")){string text=command==null?null:command.GetValue(null) as string;if(!String.IsNullOrWhiteSpace(text)){text=text.Trim();string path=text.StartsWith("\"",StringComparison.Ordinal)?text.Split('"')[1]:text.Split(' ')[0];if(CadExecutable(path))found=path;}}}}catch{}
+  if(found==null)throw new Fault(409,"MANAGED_JWCAD_NOT_FOUND");File.WriteAllText(cache,found,new UTF8Encoding(false));return found;
+ }
+ public static CadWindow StartManaged(string drawing){
+  var start=new System.Diagnostics.ProcessStartInfo(CadExe(),"\""+drawing+"\""){UseShellExecute=false,WorkingDirectory=AppDomain.CurrentDomain.BaseDirectory};
+  using(var process=WinProcess.Start(start)){
+   long started=process.StartTime.ToUniversalTime().Ticks;DateTime until=DateTime.UtcNow.AddSeconds(20);
+   while(DateTime.UtcNow<until){if(process.HasExited)throw new Fault(409,"MANAGED_JWCAD_LAUNCH_FAILED");try{var window=Window(process.Id,drawing,false);if(window.started==started)return window;}catch(Fault e){if(e.Message!="AUTO_CAD_WINDOW_NOT_FOUND"&&e.Message!="AUTO_MENU_NOT_AVAILABLE")throw;}Thread.Sleep(100);}
+  }throw new Fault(409,"MANAGED_JWCAD_LAUNCH_FAILED");
+ }
+ static void ManagedFolder(IntPtr list,Action<string> trace){
+  IntPtr dialog=GetAncestor(list,2),edit=GetDlgItem(dialog,1487);var kind=new StringBuilder(100);GetClassName(edit,kind,kind.Capacity);
+  string folder=AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+  if(edit==IntPtr.Zero||kind.ToString()!="Edit")throw new Fault(409,"MANAGED_FOLDER_CONTROL_NOT_FOUND");
+  if(String.Equals(Title(edit).TrimEnd(Path.DirectorySeparatorChar),folder,StringComparison.OrdinalIgnoreCase))return;
+  if(!SetWindowText(edit,folder)||!String.Equals(Title(edit),folder,StringComparison.OrdinalIgnoreCase))throw new Fault(409,"MANAGED_FOLDER_CHANGE_FAILED");
+  // Notify only the verified directory control. Never press a global key or
+  // activate whichever file happens to be selected in the chooser.
+  trace("MANAGED_FOLDER_CHANGE");PostMessage(dialog,0x111,new IntPtr(1487|(0x200<<16)),edit);Thread.Sleep(300);
+ }
+}
 class CadWindow {public IntPtr handle;public int pid;public long started;}
 class CadProcessInfo {public int pid,parent;public string name;}
 class CadWindowInfo {
@@ -104,7 +135,7 @@ class CadListChoice {
   trace("AUTO_UI_DEFAULT_ACTION_RETURNED");
  }
 }
-class CadNative {
+partial class CadNative {
  sealed class ListReader:CadListReader {
   readonly CadAccessible accessible;
   readonly IntPtr window;readonly string filename;
@@ -215,7 +246,7 @@ class CadNative {
  public static CadWindow Find(CadLink binding,bool busy){
   if(Environment.OSVersion.Platform!=PlatformID.Win32NT)throw new Fault(501,"AUTO_WINDOWS_ONLY");
   if(binding==null)throw new Fault(409,"AUTO_CALIBRATION_REQUIRED");
-  if(!busy){
+  if(!busy&&!ManagedPath(binding)){
    int count=0;foreach(var row in Processes().Values)if(String.Equals(Path.GetFileNameWithoutExtension(row.name),"Jw_win",StringComparison.OrdinalIgnoreCase))count++;
    if(count==0)throw new Fault(409,"AUTO_JWCAD_NOT_FOUND");
    if(count!=1)throw new Fault(409,"AUTO_MULTIPLE_JWCAD");
@@ -249,7 +280,8 @@ class CadNative {
   }catch(Fault){throw;}catch(Exception e){trace(CadListChoice.FailureDetail("list-object",e));throw new Fault(409,"AUTO_LIST_READ_FAILED");
   }finally{if(accessible!=null&&Marshal.IsComObject(accessible))Marshal.ReleaseComObject(accessible);}
  }
- public static void Execute(CadLink link,Func<bool> completed,Action<string> trace){
+ public static void Execute(CadLink link,Func<bool> completed,Action<string> trace){ExecuteFile(link,link.Macro,completed,trace);}
+ public static void ExecuteFile(CadLink link,string filename,Func<bool> completed,Action<string> trace){
   CadWindow main=Find(link,true);IntPtr previous=GetForegroundWindow();
   IntPtr existing=FileList(main);
   if(!IsWindowEnabled(main.handle)&&existing==IntPtr.Zero)throw new Fault(409,"CAD_DIALOG_OPEN");
@@ -262,9 +294,10 @@ class CadNative {
    while(DateTime.UtcNow<until){Find(link,true);list=FileList(main);if(list!=IntPtr.Zero)break;Thread.Sleep(80);}
    if(list==IntPtr.Zero)throw new Fault(409,"AUTO_FILE_DIALOG_NOT_FOUND");
    Restore(GetAncestor(list,2),"file-dialog",trace);
+   if(link.managed)ManagedFolder(list,trace);
    trace("AUTO_UI_LIST_FOUND");
    for(int attempt=0;attempt<2;attempt++)try{
-    Choose(list,link.Macro,delegate(){
+    Choose(list,filename,delegate(){
     Find(link,true);
     if(FileList(main)!=list)throw new Fault(409,"AUTO_FILE_DIALOG_CHANGED");
     if(completed())throw new Fault(409,"AUTO_ALREADY_ISSUED_CHECK_STATUS");
@@ -284,6 +317,7 @@ class CadNative {
     while(DateTime.UtcNow<until){list=FileList(main);if(list!=IntPtr.Zero)break;Thread.Sleep(80);}
     if(list==IntPtr.Zero)throw new Fault(409,"AUTO_FILE_DIALOG_NOT_FOUND");
     Restore(GetAncestor(list,2),"reopened-dialog",trace);
+    if(link.managed)ManagedFolder(list,trace);
    }
    until=DateTime.UtcNow.AddSeconds(12);
    while(DateTime.UtcNow<until){if(completed()){Thread.Sleep(250);return;}Thread.Sleep(80);}

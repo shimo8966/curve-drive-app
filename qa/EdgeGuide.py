@@ -43,7 +43,7 @@ with sync_playwright() as p:
     if mode == 'new':
         assert '入力内容を確認する' in page.locator('#guidePrimary').inner_text()
         page.locator('#guidePrimary').click()
-        with page.expect_download() as event: page.locator('#guidePrimary').click()
+        with page.expect_download() as event: page.locator('#guideSecondary').click()
         downloaded=event.value
         # The already-open native JWW was produced from this exact synthetic DXF.
         assert Path(downloaded.path()).read_text().splitlines()==(folder/'Fixture.dxf').read_text().splitlines()

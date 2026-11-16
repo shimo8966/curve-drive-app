@@ -30,11 +30,11 @@ class Fault : Exception {
     public Fault(int status, string code) : base(code) { Status = status; }
 }
 partial class Program {
-    const string AppVersion="3.0";
+    const string AppVersion="3.1";
     static readonly string Root = AppDomain.CurrentDomain.BaseDirectory;
     static readonly string StatePath = Path.Combine(Root, "State.json");
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
-    static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+    static readonly JavaScriptSerializer Json = new JavaScriptSerializer {MaxJsonLength=8388608};
     static readonly Encoding Utf8 = new UTF8Encoding(false);
     static string WorkId(){using(var hash=System.Security.Cryptography.SHA256.Create()){return BitConverter.ToString(hash.ComputeHash(Utf8.GetBytes(Path.GetFullPath(Root).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant()))).Replace("-","");}}
     static int Ready(){
@@ -153,12 +153,12 @@ partial class Program {
         ctx.Response.OutputStream.Write(data,0,data.Length);
         ctx.Response.Close();
     }
-    static Dictionary<string,object> Body(HttpListenerContext ctx) {
-        if (ctx.Request.ContentLength64 > 65536) throw new Fault(413,"TOO_LARGE");
+    static Dictionary<string,object> Body(HttpListenerContext ctx,int limit=32768) {
+        if (ctx.Request.ContentLength64 > limit*4L) throw new Fault(413,"TOO_LARGE");
         using (var reader = new StreamReader(ctx.Request.InputStream, Utf8)) {
-            char[] chars = new char[32769];
+            char[] chars = new char[limit+1];
             int count = reader.ReadBlock(chars,0,chars.Length);
-            if (count > 32768) throw new Fault(413,"TOO_LARGE");
+            if (count > limit) throw new Fault(413,"TOO_LARGE");
             try { return Map(Json.DeserializeObject(new string(chars,0,count))); }
             catch (Fault) { throw; }
             catch { throw new Fault(400,"INVALID_JSON"); }
@@ -168,7 +168,7 @@ partial class Program {
         if (s == null) return new { ok = true, hasBaseline = false, hasPoint = false };
         return new { ok = true, hasBaseline = true, hasPoint = s.state != "ready", state = s.state,
             site = s.site, planKey = s.planKey, session = s.session, station = s.station,
-            previousStation = s.previousStation, saved = s.saved, cadVerified = false, automation = AutoSummary(s) };
+            previousStation = s.previousStation, saved = s.saved, cadVerified = ManagedVerified(s), automation = AutoSummary(s) };
     }
     static void Baseline(HttpListenerContext ctx, Dictionary<string,object> d) {
         string site = Text(Field(d,"site"),120), plan = Text(Field(d,"planKey"),16000);
@@ -208,6 +208,7 @@ partial class Program {
             }
             if (station <= s.station + 0.0000001) throw new Fault(409,"POINT_ALREADY_ISSUED_OR_OLD");
             if (!Near(previous,s.station) || !Same(q,s.p)) throw new Fault(409,"PREVIOUS_POINT_MISMATCH");
+            if(link!=null&&link.managed)ManagedSnapshot(link,d);
             s.state="pending";s.previousStation=previous;s.station=station;s.p=p;s.q=q;s.offsetMm=offset;s.saved=Now();
             Save(s);
             Reply(ctx,200,new {ok=true,state="pending",station=s.station,timestamp=s.saved,idempotent=false});
@@ -228,6 +229,7 @@ partial class Program {
         if (method=="GET" && path=="/health") { Reply(ctx,200,new {ok=true,version=AppVersion,workId=WorkId(),cadAutomation=false});return; }
         if (method=="GET" && path=="/latest") { using(Lock()) {Reply(ctx,200,Latest(Load()));}return; }
         if (GuideRoute(ctx,method,path)) return;
+        if (ManagedRoute(ctx,method,path)) return;
         if (AutoRoute(ctx,method,path)) return;
         if (method=="POST" && path=="/baseline") { Baseline(ctx,Body(ctx));return; }
         if (method=="POST" && path=="/point") { Receive(ctx,Body(ctx));return; }
@@ -272,14 +274,14 @@ partial class Program {
     }
     static int Main(string[] args) {
         if(args.Length==1&&args[0]=="--ready")return Ready();
-        if (args.Length==3 && (args[0]=="--setup" || args[0]=="--auto" || args[0]=="--field")) return AutoCli(args[0],args[1],args[2]);
+        if (args.Length==3 && (args[0]=="--setup" || args[0]=="--auto" || args[0]=="--field" || args[0]=="--verify")) return AutoCli(args[0],args[1],args[2]);
         if (args.Length==2 && args[0]=="--import") return Import(args[1]);
         bool open = args.Length==1 && args[0]=="--open";
         if (args.Length!=0 && !open) {Console.Error.WriteLine("Usage: Bridge.exe [--open | --import JWC_TEMP.TXT]");return 2;}
         var listener=new HttpListener();listener.Prefixes.Add("http://127.0.0.1:18718/");
         try {listener.Start();}
         catch(Exception e) {Console.Error.WriteLine("Cannot start bridge: "+e.Message);return 1;}
-        Console.WriteLine("CurveDrive Bridge v3.0 http://127.0.0.1:18718/ (local only)");
+        Console.WriteLine("CurveDrive Bridge v3.1 http://127.0.0.1:18718/ (local only)");
         Console.WriteLine("Folder: "+Root+" | CAD drawing is not acknowledged.");
         if (open) {
             try {System.Diagnostics.Process.Start("microsoft-edge:http://127.0.0.1:18718/");}
