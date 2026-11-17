@@ -34,9 +34,8 @@ try:
   page=browser.new_page(viewport={'width':1180,'height':900},accept_downloads=True);errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
   url=start();page.goto(url);page.wait_for_function('!document.querySelector("#beginEntry").disabled')
   assert page.locator('[data-meas][data-key="s"]').count()==0;assert page.locator('#latestView').count()==0;check('Plan-only app starts without JW and without latest-point button')
-  await_download=page.expect_download()
-  with await_download:page.locator('#exportJson').click()
-  assert json.loads(Path(await_download.value.path()).read_text())['meas']==[];check('Plan-only backup contains no fabricated actual measurement')
+  with page.expect_download() as download:page.locator('#exportJson').click()
+  assert json.loads(Path(download.value.path()).read_text())['meas']==[];check('Plan-only backup contains no fabricated actual measurement')
   page.locator('#addMeas').click()
   for k,v in [('s','0.5'),('left','20'),('up','-5'),('depth','2.3')]:page.locator(f'[data-meas="0"][data-key="{k}"]').fill(v)
   page.locator('[data-meas="0"][data-key="depth"]').press('Enter');page.locator('[data-meas="1"][data-key="s"]').fill('1')
@@ -53,6 +52,7 @@ try:
   assert json.loads((data/'Project.previous.json').read_text())['data']['meas'];check('Automatic previous PC backup is present and readable')
   page.set_viewport_size({'width':390,'height':844});assert page.locator('#measTable').bounding_box()['width']<=390;page.screenshot(path=str(out/'Windows-mobile-layout.png'));check('Narrow-screen measurement cards fit a phone-width viewport')
   page.close();context.close()
+  before=(data/'Project.json').read_bytes();loading=browser.new_context();pending=loading.new_page();pending.route('**/api/project',lambda route:None);pending.goto(url);pending.close();loading.close();time.sleep(.3);assert (data/'Project.json').read_bytes()==before;check('Closing before initial restore finishes cannot overwrite saved PC data with defaults')
   # A separate browser-only session uses the same distributed app without PC APIs.
   web=browser.new_context(viewport={'width':390,'height':844},accept_downloads=True);page=web.new_page();page.on('pageerror',lambda e:errors.append(str(e)));origin=urlsplit(url).scheme+'://'+urlsplit(url).netloc
   calls=[];page.on('request',lambda r:calls.append(r.url) if '/api/' in r.url else None);page.goto(origin+'/');page.locator('#addMeas').click();page.locator('[data-meas="0"][data-key="s"]').fill('2');page.reload();assert page.locator('[data-meas="0"][data-key="s"]').input_value()=='2';check('Web mode restores incomplete drafts without sending project data to any server')
