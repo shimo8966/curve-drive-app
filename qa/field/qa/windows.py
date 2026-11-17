@@ -12,7 +12,7 @@ def start():
  server=subprocess.Popen([str(root/'CurveDrive.exe'),'--server-only'],env=dict(os.environ,CURVEDRIVE_FIELD_DATA=str(data)))
  file=data/('runtime-'+str(server.pid)+'.json')
  for _ in range(100):
-  if file.exists():return json.loads(file.read_text())['url']
+  if file.exists():return json.loads(file.read_text(encoding='utf-8'))['url']
   if server.poll() is not None:raise AssertionError('Windows app process exited')
   time.sleep(.1)
  raise AssertionError('Windows app not ready')
@@ -35,7 +35,7 @@ try:
   url=start();page.goto(url);page.wait_for_function('!document.querySelector("#beginEntry").disabled')
   assert page.locator('[data-meas][data-key="s"]').count()==0;assert page.locator('#latestView').count()==0;check('Plan-only app starts without JW and without latest-point button')
   with page.expect_download() as download:page.locator('#exportJson').click()
-  assert json.loads(Path(download.value.path()).read_text())['meas']==[];check('Plan-only backup contains no fabricated actual measurement')
+  assert json.loads(Path(download.value.path()).read_text(encoding='utf-8'))['meas']==[];check('Plan-only backup contains no fabricated actual measurement')
   page.locator('#addMeas').click()
   for k,v in [('s','0.5'),('left','20'),('up','-5'),('depth','2.3')]:page.locator(f'[data-meas="0"][data-key="{k}"]').fill(v)
   page.locator('[data-meas="0"][data-key="depth"]').press('Enter');page.locator('[data-meas="1"][data-key="s"]').fill('1')
@@ -49,7 +49,7 @@ try:
   page.locator('#deviation [data-station="1.5"]').first.click();text=page.locator('#selectedPoint').inner_text();assert '右 10mm' in text and '上 6mm' in text;check('Deviation graph selection identifies the selected measurement, rather than the latest point')
   page.locator('#preview g[data-station="0.5"]').focus();page.keyboard.press('Enter');assert '0.5m' in page.locator('#selectedPoint').inner_text();check('Measurement selection supports keyboard Enter')
   page.locator('#zoomIn').click();assert page.locator('#preview').get_attribute('viewBox')!='0 0 800 310';page.locator('#fit').click();check('Plan zoom and whole-plan reset work')
-  assert json.loads((data/'Project.previous.json').read_text())['data']['meas'];check('Automatic previous PC backup is present and readable')
+  assert json.loads((data/'Project.previous.json').read_text(encoding='utf-8'))['data']['meas'];check('Automatic previous PC backup is present and readable')
   page.set_viewport_size({'width':390,'height':844});assert page.locator('#measTable').bounding_box()['width']<=390;page.screenshot(path=str(out/'Windows-mobile-layout.png'));check('Narrow-screen measurement cards fit a phone-width viewport')
   page.close();context.close()
   before=(data/'Project.json').read_bytes();loading=browser.new_context();pending=loading.new_page();pending.route('**/api/project',lambda route:None);pending.goto(url);pending.close();loading.close();time.sleep(.3);assert (data/'Project.json').read_bytes()==before;check('Closing before initial restore finishes cannot overwrite saved PC data with defaults')
