@@ -39,7 +39,7 @@ try:
   page.locator('#addMeas').click()
   for k,v in [('s','0.5'),('left','20'),('up','-5'),('depth','2.3')]:page.locator(f'[data-meas="0"][data-key="{k}"]').fill(v)
   page.locator('[data-meas="0"][data-key="depth"]').press('Enter');page.locator('[data-meas="1"][data-key="s"]').fill('1')
-  saved(lambda r:r['data']['meas'][1]['s']=='1');check('PC automatically saves unfinished measurement rows as well as complete values')
+  saved(lambda r:r['data']['meas'][1]['s']=='1');assert page.locator('#preview g[data-station="0.5"]').count()==1;check('PC automatically saves unfinished measurement rows as well as complete values')
   page.locator('[data-meas="1"][data-key="s"]').fill('1.5');page.close();saved(lambda r:r['data']['meas'][1]['s']=='1.5');check('Closing the app retains the latest typed value in a PC file')
   stop();url=start();context=browser.new_context(viewport={'width':1180,'height':900});page=context.new_page();page.on('pageerror',lambda e:errors.append(str(e)));page.goto(url);page.wait_for_function('!document.querySelector("#beginEntry").disabled')
   assert page.locator('[data-meas="1"][data-key="s"]').input_value()=='1.5';assert page.locator('[data-meas="0"][data-key="depth"]').input_value()=='2.3';check('New app process, new port and fresh browser context restore latest PC data without browser storage')
