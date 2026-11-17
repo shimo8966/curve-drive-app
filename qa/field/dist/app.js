@@ -269,4 +269,14 @@ $('fit').onclick=()=>{followPlanFit=true;fitPlanExtent()};
 const movePlan=svg.onpointermove;svg.onpointermove=e=>{if(drag&&Math.hypot(e.clientX-drag[0],e.clientY-drag[1])>4)followPlanFit=false;movePlan(e)};
 if('ResizeObserver'in window)new ResizeObserver(()=>{try{renderDeviation(displayModel());highlightSelection()}catch{}}).observe($('deviation'));
 preview();
+
+const quickFields=[['quickS','s'],['quickLeft','left'],['quickUp','up'],['quickDepth','depth']];let quickRow=null,quickProjectId=null;
+function quickError(message){$('quickMessage').hidden=!message;$('quickMessage').textContent=message}
+function quickAlignment(){const a=stationAlignment($('quickS').value);$('quickAlignment').textContent=a.title+' ／ '+a.detail}
+$('quickAdd').onclick=()=>{if(restoring||projectBusy)return;quickProjectId=activeProjectId;quickRow=meas.length&&[meas[meas.length-1].s,meas[meas.length-1].left].some(v=>String(v).trim()==='')?meas[meas.length-1]:{s:'',left:'',up:'',depth:''};for(const [id,key]of quickFields)$(id).value=quickRow[key]??'';quickError('');quickAlignment();$('quickDialog').showModal();const missing=quickFields.find(([id,key])=>['s','left'].includes(key)&&String(quickRow[key]).trim()==='');$(missing?missing[0]:'quickS').focus()};
+function storeQuickDraft(){if(!quickRow||restoring||projectBusy||quickProjectId!==activeProjectId)return;for(const [id,key]of quickFields)quickRow[key]=$(id).value;if(!meas.includes(quickRow)&&quickFields.some(([,key])=>String(quickRow[key]).trim()!==''))meas.push(quickRow);activeMeasIndex=Math.max(0,meas.indexOf(quickRow));measRender();refresh();quickAlignment()}
+for(const [id]of quickFields){$(id).addEventListener('input',()=>{quickError('');storeQuickDraft()});$(id).addEventListener('keydown',e=>{if(e.key!=='Enter'||e.isComposing||e.repeat)return;e.preventDefault();if(id==='quickS')$('quickLeft').focus();else if(id==='quickLeft')$('quickUp').focus();else $('quickForm').requestSubmit()})}
+$('quickClose').onclick=()=>$('quickDialog').close();
+$('quickForm').onsubmit=e=>{e.preventDefault();if(!quickRow||restoring||projectBusy)return;try{if(quickProjectId!==activeProjectId)throw Error('現場が変わりました。追加画面を開き直してください');storeQuickDraft();number(quickRow.s,'推進延長');number(quickRow.left,'左右ズレ');const data=snapshot(),complete=data.meas.filter(q=>String(q.s).trim()!==''&&String(q.left).trim()!=='');const m=model({...data,meas:complete}),p=m.mm.find(p=>p.s===Number(quickRow.s));if(!p)throw Error('延長と左右ズレを確認してください');selectedStation=p.s;measRender();refresh();showPoint(p);followPlanFit=true;fitPlanExtent();$('quickDialog').close()}catch(err){quickError(err.message)}};
+$('quickDialog').addEventListener('close',()=>{quickRow=null;quickProjectId=null;requestAnimationFrame(()=>{$('quickAdd').focus({preventScroll:true});markerSizes()})});
 })();
