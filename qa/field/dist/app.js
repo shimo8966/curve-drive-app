@@ -244,9 +244,10 @@ segRender();measRender();applyColors();preview();
 function setAppMode(mode){document.body.dataset.appMode=mode;$('entryPane').hidden=mode==='review';$('modeReview').setAttribute('aria-pressed',String(mode==='review'));$('modeEntry').setAttribute('aria-pressed',String(mode==='entry'));window.scrollTo(0,0);requestAnimationFrame(()=>markerSizes())}
 $('modeReview').onclick=()=>setAppMode('review');$('modeEntry').onclick=()=>setAppMode('entry');
 $('openChartSettings').onclick=()=>$('chartSettings').showModal();$('closeChartSettings').onclick=()=>$('chartSettings').close();
-const boardPreview=preview;preview=function(){boardPreview();$('boardSite').textContent=$('site').value||'名称未入力';$('boardTolerance').textContent='許容 ±'+toleranceMm+'mm';$('boardSave').textContent=$('status').classList.contains('error')?$('status').textContent:'入力は自動保存'};
+const boardPreview=preview;preview=function(){boardPreview();$('boardSite').textContent=$('site').value||'名称未入力';$('boardTolerance').textContent='許容 ±'+toleranceMm+'mm';updateBoardNotice()};
 const baseRenderProjects=renderProjects;renderProjects=function(){baseRenderProjects();$('boardSite').textContent=$('site').value||'名称未入力'};
-const saveIndicator=new MutationObserver(()=>{$('boardSave').textContent=$('deviceBackupStatus').textContent.includes('できません')?'保存できません：表示設定からバックアップしてください':'入力は自動保存'});saveIndicator.observe($('deviceBackupStatus'),{childList:true,characterData:true,subtree:true});
+function updateBoardNotice(){const saved=$('deviceBackupStatus').textContent,failed=/できません|読めません|停止|保護|エラー/.test(saved);const message=failed?saved:$('status').classList.contains('error')?$('status').textContent:'';$('boardAlert').hidden=!message;$('boardAlert').textContent=message;$('boardSave').textContent=restoring?'保存データを確認中':failed?'保存を確認してください':'入力は自動保存'}
+const saveIndicator=new MutationObserver(updateBoardNotice);saveIndicator.observe($('deviceBackupStatus'),{childList:true,characterData:true,subtree:true});
 if('ResizeObserver'in window)new ResizeObserver(()=>markerSizes()).observe(svg);
 setAppMode('review');preview();
 })();
