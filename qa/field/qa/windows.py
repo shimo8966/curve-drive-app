@@ -62,6 +62,9 @@ try:
   page.locator('#addMeas').click()
   for k,v in [('s','10'),('left','1')]:page.locator(f'[data-meas="2"][data-key="{k}"]').fill(v)
   boundary=page.locator('#preview g[data-station="10"]');assert boundary.get_attribute('data-kind')=='boundary';boundary.click();assert '直線 → 左曲線' in page.locator('#selectedPoint').inner_text();check('Exact-boundary measured point reports the segment transition')
+  assert page.locator('#preview .boundaryAnnotation text').count()==0
+  assert page.locator('#preview').evaluate("el=>{const all=[...el.children];return Math.max(...all.filter(x=>x.classList.contains('boundaryAnnotation')).map(x=>all.indexOf(x)))<Math.min(...all.filter(x=>x.matches('g[data-station]')).map(x=>all.indexOf(x)))}")
+  page.locator('#zoomIn').click();page.locator('#preview g[data-station="10"]').focus();page.keyboard.press('Enter');assert '直線 → 左曲線' in page.locator('#selectedPoint').inner_text();page.locator('#fit').click();page.screenshot(path=str(out/'Windows-clear-actual-points.png'),full_page=True);check('Curve labels stay outside the plot and actual points remain above all plan and boundary graphics after zoom')
   page.locator('#colorL').evaluate("el=>{el.value='#aa4400';el.dispatchEvent(new Event('input',{bubbles:true}))}")
   first=saved(lambda r:r['data'].get('workspace',{}).get('colors',{}).get('L')=='#aa4400')['data']['workspace']['activeId']
   page.once('dialog',lambda d:d.accept('第２現場'));page.locator('#newProject').click();page.wait_for_function("document.querySelector('#currentProjectName').textContent==='第２現場'")
