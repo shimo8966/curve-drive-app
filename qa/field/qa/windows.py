@@ -3,7 +3,7 @@ import sys,os,time,json,subprocess,tempfile,hashlib,shutil,urllib.request
 from urllib.parse import urlsplit,parse_qs
 from playwright.sync_api import sync_playwright
 root=Path(__file__).resolve().parents[1];data=Path(tempfile.mkdtemp(prefix='CurveFieldData_'));out=Path(os.environ.get('CURVE_QA_OUT',str(root/'qa-out')));out.mkdir(exist_ok=True);server=None;count=0
-legacy=Path(tempfile.mkdtemp(prefix="CurveFieldLegacy_"));legacy_record={"data":{"basics":{"site":"引継ぎ現場","x0":"0","y0":"0","heading":"0","pitch":"0.5","z0":"0","grade":"0"},"segs":[{"type":"S","l":"10","r":""},{"type":"L","l":"15","r":"100"},{"type":"R","l":"10","r":"80"}],"meas":[]},"savedAt":1}
+legacy=Path(tempfile.mkdtemp(prefix="CurveFieldLegacy_"));legacy_record={"data":{"basics":{"site":"引継ぎ現場","x0":"0","y0":"0","heading":"0","pitch":"0.5","z0":"0","grade":"0"},"segs":[{"type":"S","l":"10","r":""},{"type":"L","l":"20","r":"100"},{"type":"S","l":"10","r":""},{"type":"R","l":"20","r":"50"},{"type":"S","l":"10","r":""}],"meas":[]},"savedAt":1}
 (legacy/"Project.json").write_text(json.dumps(legacy_record),encoding="utf-8")
 
 def check(message):
@@ -57,16 +57,16 @@ try:
   assert page.locator('#preview g[data-station="1.5"]').get_attribute('aria-pressed')=='true';assert page.locator('#deviation circle[data-station="1.5"].selectedMeasurement').count()==2
   page.locator('#preview g[data-station="0.5"]').click();assert page.locator('#deviation circle[data-station="0.5"].selectedMeasurement').count()==2;assert page.locator('#deviation circle[data-station="1.5"].selectedMeasurement').count()==0;check('Selection synchronizes both graphs in both directions without leaving the previous point highlighted')
   assert page.locator('#deviation .toleranceLine[data-limit="50"]').count()==1 and page.locator('#deviation .toleranceLine[data-limit="-50"]').count()==1
-  page.locator('#openChartSettings').click();page.locator('#toleranceMm').fill('30');page.locator('#toleranceMm').press('Tab');saved(lambda r:r['data'].get('toleranceMm')=='30');assert page.locator('#deviation .toleranceLine[data-limit="30"]').count()==1;assert float(page.locator('#deviation .toleranceLine[data-limit="30"]').get_attribute('y1'))>20;check('Editable positive and negative tolerance lines remain visible and save with the current project');page.locator('#closeChartSettings').click()
+  page.locator('#toleranceMm').fill('30');page.locator('#toleranceMm').press('Tab');saved(lambda r:r['data'].get('toleranceMm')=='30');assert page.locator('#deviation .toleranceLine[data-limit="30"]').count()==1;assert float(page.locator('#deviation .toleranceLine[data-limit="30"]').get_attribute('y1'))>20;check('Editable positive and negative tolerance lines remain visible and save with the current project')
   page.locator('#preview g[data-station="0.5"]').focus();page.keyboard.press('Enter');assert '0.5m' in page.locator('#selectedPoint').inner_text();check('Measurement selection supports keyboard Enter')
   page.locator('#zoomIn').click();assert page.locator('#preview').get_attribute('viewBox')!='0 0 800 310';page.locator('#fit').click();check('Plan zoom and whole-plan reset work')
   assert json.loads((data/'Project.previous.json').read_text(encoding='utf-8'))['data']['meas'];check('Automatic previous PC backup is present and readable')
   page.locator('#modeEntry').click();page.set_viewport_size({'width':390,'height':844});assert page.locator('#measTable').bounding_box()['width']<=390;page.screenshot(path=str(out/'Windows-mobile-layout.png'));check('Narrow-screen measurement cards fit a phone-width viewport')
   # Workspace: curve ranges, boundaries, shared colors, new/return and failure protection.
-  assert page.locator('#preview polyline[data-kind="S"]').get_attribute('stroke')=='#2563eb'
+  assert page.locator('#preview polyline[data-kind="S"]').first.get_attribute('stroke')=='#2563eb'
   assert page.locator('#preview polyline[data-kind="L"]').get_attribute('stroke')=='#d97706'
   assert page.locator('#preview polyline[data-kind="R"]').get_attribute('stroke')=='#8b5cf6'
-  assert '10〜25m' in page.locator('#segmentBands').inner_text();check('Plan colors and explicit curve station ranges distinguish all three segment types')
+  assert '10〜30m' in page.locator('#segmentBands').inner_text();check('Plan colors and explicit curve station ranges distinguish all three segment types')
   page.locator('#addMeas').click()
   for k,v in [('s','10'),('left','1')]:page.locator(f'[data-meas="2"][data-key="{k}"]').fill(v)
   boundary=page.locator('#preview g[data-station="10"]');assert boundary.get_attribute('data-kind')=='boundary';boundary.click();assert '直線 → 左曲線' in page.locator('#selectedPoint').inner_text();check('Exact-boundary measured point reports the segment transition');page.locator('#modeReview').click()
@@ -75,12 +75,15 @@ try:
   page.locator('#zoomIn').click();page.locator('#preview g[data-station="10"]').focus();page.keyboard.press('Enter');assert '直線 → 左曲線' in page.locator('#selectedPoint').inner_text();page.locator('#fit').click();page.screenshot(path=str(out/'Windows-clear-actual-points.png'),full_page=True);check('Curve labels stay outside the plot and actual points remain above all plan and boundary graphics after zoom')
   for w,h in [(390,844),(360,640),(320,568),(844,390),(1024,600),(1366,768)]:
    page.set_viewport_size({'width':w,'height':h});page.wait_for_timeout(120)
-   for selector in ['#preview','#deviation','#selectedPoint']:
+   for selector in ['#preview','#deviation','#selectedPoint','#segmentBands','#toleranceMm']:
     box=page.locator(selector).bounding_box();assert box is not None and box['y']>=0 and box['y']+box['height']<=h+1,(w,h,selector,box)
+   assert page.locator('#segmentBands').evaluate('el=>el.scrollHeight<=el.clientHeight+1 && el.scrollWidth<=el.clientWidth+1'),(w,h)
+   assert page.locator('#segmentBands .segmentBand').count()==5
+   assert page.locator('#preview').bounding_box()['y']<page.locator('#segmentBands').bounding_box()['y']<page.locator('#toleranceMm').bounding_box()['y']<page.locator('#deviation').bounding_box()['y']
    assert page.evaluate('document.documentElement.scrollHeight<=innerHeight+1 && document.documentElement.scrollWidth<=innerWidth+1')
    if w==360:page.screenshot(path=str(out/'Windows-dashboard-small.png'))
    if w==1366:page.screenshot(path=str(out/'Windows-dashboard-desktop.png'))
-  check('Both charts and selected-point values fit without scrolling at phone, landscape and small-PC sizes')
+  check('Both stacked charts, five alignment bars, editable tolerance and selected-point values fit without page scrolling at six viewport sizes')
   page.set_viewport_size({'width':390,'height':844});page.locator('#modeEntry').click();page.locator('#modeReview').click();assert page.locator('#preview g[data-station="10"]').get_attribute('aria-pressed')=='true';check('Input and management switching preserves synchronized selection and current data')
   page.locator('#openChartSettings').click()
   page.locator('#colorL').evaluate("el=>{el.value='#aa4400';el.dispatchEvent(new Event('input',{bubbles:true}))}")
