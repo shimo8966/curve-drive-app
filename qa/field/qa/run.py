@@ -5,4 +5,5 @@ csc=Path(os.environ['SystemRoot'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe
 subprocess.run([str(csc),'/nologo','/noconfig','/codepage:65001','/langversion:5','/target:winexe','/out:'+str(r/'CurveDrive.exe'),'/reference:System.dll','/reference:System.Core.dll','/reference:System.Web.Extensions.dll','/reference:System.Web.dll','/reference:System.Windows.Forms.dll',str(r/'CurveDrive.cs')],check=True)
 subprocess.run([sys.executable,'-m','pip','install','playwright==1.56.0'],check=True)
 with (out/'Windows.log').open('w',encoding='utf-8') as log:
- subprocess.run([sys.executable,str(r/'qa/windows.py')],env=dict(os.environ,CURVE_QA_OUT=str(out),PYTHONIOENCODING='utf-8'),stdout=log,stderr=subprocess.STDOUT,check=True,timeout=180)
+ subprocess.run(['node',str(r/'qa/prediction.cjs')],env=dict(os.environ,CURVE_APP_JS=str(r/'dist/app.js')),stdout=log,stderr=subprocess.STDOUT,check=True)
+ subprocess.run([sys.executable,str(r/'qa/windows.py')],env=dict(os.environ,CURVE_QA_OUT=str(out),PYTHONIOENCODING='utf-8'),stdout=log,stderr=subprocess.STDOUT,check=True,timeout=240)

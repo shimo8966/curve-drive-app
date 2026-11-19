@@ -1,5 +1,5 @@
 
-(()=>{'use strict';const $=id=>document.getElementById(id);const basics=['site','x0','y0','heading','pitch','z0','grade'];let segs=[{type:'S',l:'10',r:''},{type:'L',l:'15',r:'100'},{type:'S',l:'8',r:''},{type:'R',l:'12',r:'80'},{type:'S',l:'5',r:''}];let meas=[];let toleranceMm='50';
+(()=>{'use strict';const $=id=>document.getElementById(id);const basics=['site','x0','y0','heading','pitch','z0','grade'];let segs=[{type:'S',l:'10',r:''},{type:'L',l:'15',r:'100'},{type:'S',l:'8',r:''},{type:'R',l:'12',r:'80'},{type:'S',l:'5',r:''}];let meas=[];let toleranceMm='50',forecastEnabled=false;
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const storageKey='curve-drive-field-v2';
 // Labels describe the planned alignment at the station; measurement coordinates are unchanged.
@@ -31,7 +31,7 @@ function updateAlignment(){
 }
 $('measBody').addEventListener('focusin',e=>{if(e.target.dataset.meas!==undefined){activeMeasIndex=Number(e.target.dataset.meas);updateAlignment()}});
 
-function snapshot(){return{basics:Object.fromEntries(basics.map(k=>[k,$(k).value])),segs,meas,toleranceMm}}
+function snapshot(){return{basics:Object.fromEntries(basics.map(k=>[k,$(k).value])),segs,meas,toleranceMm,forecastEnabled}}
 function plain(v){return v!==null&&typeof v==='object'&&!Array.isArray(v)}
 function scalar(v,label,blank=false){if(typeof v!=='string'&&typeof v!=='number')throw Error(label+'の形式が不正です');const text=String(v);if(blank&&text.trim()==='')return '';number(text,label);return text}
 function validateData(raw){
@@ -40,14 +40,15 @@ function validateData(raw){
  const b={};for(const k of basics){if(k==='site'){if(typeof raw.basics[k]!=='string'||raw.basics[k].length>100)throw Error('現場名の形式が不正です');b[k]=raw.basics[k]}else b[k]=scalar(raw.basics[k],k)}
  const ss=raw.segs.map((q,i)=>{if(!plain(q)||!['S','L','R'].includes(q.type))throw Error((i+1)+'区間の種類が不正です');return{type:q.type,l:scalar(q.l,'区間長'),r:q.type==='S'?scalar(q.r===undefined?'':q.r,'半径',true):scalar(q.r,'半径')}});
  const mm=raw.meas.map((q,i)=>{if(!plain(q))throw Error((i+1)+'行目の実測形式が不正です');return{s:scalar(q.s,'推進延長',true),left:scalar(q.left,'左右ズレ',true),up:scalar(q.up===undefined?'':q.up,'上下ズレ',true),...(q.depth===undefined?{}:{depth:scalar(q.depth,'深さ',true)})}});
- const data={basics:b,segs:ss,meas:mm,toleranceMm:raw.toleranceMm??'50'};model(data);return data;
+ const data={basics:b,segs:ss,meas:mm,toleranceMm:raw.toleranceMm??'50',forecastEnabled:raw.forecastEnabled??false};model(data);return data;
 }
-function applyData(data){segs=data.segs;meas=data.meas;toleranceMm=String(data.toleranceMm??'50');$('toleranceMm').value=toleranceMm;for(const k of basics)$(k).value=data.basics[k]}
+function applyData(data){segs=data.segs;meas=data.meas;toleranceMm=String(data.toleranceMm??'50');forecastEnabled=data.forecastEnabled??false;$('toleranceMm').value=toleranceMm;for(const k of basics)$(k).value=data.basics[k]}
 function draftData(raw){
  if(!plain(raw)||!plain(raw.basics)||!Array.isArray(raw.segs)||!Array.isArray(raw.meas)||raw.segs.length>1000||raw.meas.length>20000)throw Error('保存データの形式を確認してください');
  const text=v=>{if(typeof v!=='string'&&typeof v!=='number')throw Error('保存データの値が不正です');return String(v)};
  const tolerance=String(raw.toleranceMm??'50');if(tolerance.trim()===''||!Number.isFinite(Number(tolerance))||Number(tolerance)<=0||Number(tolerance)>10000)throw Error('許容値は0より大きく10000mm以下で入力してください');
- const data={toleranceMm:tolerance,basics:Object.fromEntries(basics.map(k=>[k,text(raw.basics[k])])),segs:raw.segs.map(v=>{if(!plain(v)||!['S','L','R'].includes(v.type))throw Error('区間形式が不正です');return {type:v.type,l:text(v.l),r:text(v.r)}}),meas:raw.meas.map(v=>{if(!plain(v))throw Error('実測形式が不正です');return {s:text(v.s),left:text(v.left),up:text(v.up??''),depth:text(v.depth??'')}})};return data;
+ if(raw.forecastEnabled!==undefined&&typeof raw.forecastEnabled!=='boolean')throw Error('予測表示の保存形式が不正です');
+ const data={forecastEnabled:raw.forecastEnabled??false,toleranceMm:tolerance,basics:Object.fromEntries(basics.map(k=>[k,text(raw.basics[k])])),segs:raw.segs.map(v=>{if(!plain(v)||!['S','L','R'].includes(v.type))throw Error('区間形式が不正です');return {type:v.type,l:text(v.l),r:text(v.r)}}),meas:raw.meas.map(v=>{if(!plain(v))throw Error('実測形式が不正です');return {s:text(v.s),left:text(v.left),up:text(v.up??''),depth:text(v.depth??'')}})};return data;
 }
 function persist(){try{const value=JSON.stringify(draftData(snapshot())),previous=localStorage.getItem(storageKey);if(previous&&previous!==value){try{draftData(JSON.parse(previous));localStorage.setItem(storageKey+'-backup',previous)}catch{}}localStorage.setItem(storageKey,value);$('saveStatus').textContent='自動保存済み。次回は最後の入力から再開します。';}catch(e){$('saveStatus').textContent='自動保存できません：'+e.message+'。画面を閉じる前にファイルへ保存してください。'}}
 let recoveryNotice='',loadedStoredData=false;
@@ -257,10 +258,11 @@ function fitPlanExtent(){const pts=[];svg.querySelectorAll('polyline').forEach(l
 function renderDeviation(m){
  const dev=$('deviation'),rect=dev.getBoundingClientRect(),w=Math.max(120,rect.width),h=Math.max(80,rect.height),x0=42,x1=w-12,y0=20,y1=h-20,mid=(y0+y1)/2,amplitude=(y1-y0)/2;
  dev.setAttribute('viewBox',`0 0 ${w} ${h}`);
- const maximum=Math.max(10,Number(toleranceMm)*1.25,...m.mm.flatMap(p=>[Math.abs(p.left),Math.abs(p.up??0)])),x=p=>x0+(x1-x0)*p.s/m.total,y=v=>mid-amplitude*v/maximum;
+ const prediction=forecastEnabled?predictAlignment(m):null;const maximum=Math.ceil(10*Math.max(10,Number(toleranceMm)*1.25,...m.mm.flatMap(p=>[Math.abs(p.left),Math.abs(p.up??0)]),...(prediction?.available?prediction.points.map(p=>Math.abs(p.left)):[])))/10,x=p=>x0+(x1-x0)*p.s/m.total,y=v=>mid-amplitude*v/maximum;
  let g=`<path d="M${x0} ${mid}H${x1}" stroke="#d44c4c"/><text x="2" y="${y0+3}" font-size="11">${metres(maximum)}</text><text x="2" y="${mid+4}" font-size="11">0</text><text x="2" y="${y1+3}" font-size="11">−${metres(maximum)}</text><text x="${x0}" y="${h-3}" font-size="11">0m</text><text x="${x1}" y="${h-3}" text-anchor="end" font-size="11">${metres(m.total)}m</text>`;
  const limit=Number(toleranceMm);for(const v of [limit,-limit])g+=`<line class="toleranceLine" data-limit="${v}" x1="${x0}" x2="${x1}" y1="${y(v)}" y2="${y(v)}" stroke="#b45309" stroke-width="1.5" stroke-dasharray="8 5" pointer-events="none"/>`;
  for(const [key,color]of[['left','#16a085'],['up','#2563eb']]){let group=[];const flush=()=>{if(group.length>1)g+=`<polyline points="${group.map(p=>`${x(p)},${y(p[key])}`).join(' ')}" fill="none" stroke="${color}" stroke-dasharray="${key==='up'?'6 4':'none'}"/>`;group=[]};for(const p of m.mm){if(p[key]===null){flush();continue}group.push(p);const a=stationAlignment(p.s,m),pointColor=a.kind==='boundary'?'#19304b':colors[a.kind];g+=`<circle cx="${x(p)}" cy="${y(p[key])}" r="6" fill="${key==='up'||a.kind==='boundary'?'white':pointColor}" stroke="${pointColor}" stroke-width="2" data-kind="${a.kind}" data-station="${p.s}" data-series="${key}" role="button" tabindex="0" aria-label="始点から${p.s}mの実測値" style="cursor:pointer"/>`}flush()}
+ if(prediction?.available)g+=`<polyline data-forecast="deviation" points="${prediction.points.map(p=>`${x(p)},${y(p.left)}`).join(' ')}" fill="none" stroke="#0f766e" stroke-width="2.5" stroke-dasharray="7 5" pointer-events="none"/>`;
  dev.innerHTML=g;dev.querySelectorAll('[data-station]').forEach(c=>{c.onclick=()=>showPoint(m.mm.find(p=>p.s===Number(c.dataset.station)));c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();c.click?c.click():c.dispatchEvent(new MouseEvent('click',{bubbles:true}))}}});
 }
 
@@ -296,4 +298,27 @@ if('ResizeObserver'in window){new ResizeObserver(applySplit).observe($('chartGri
 applySplit();
 
 svg.addEventListener('wheel',e=>{if(restoring||projectBusy||e.ctrlKey||e.metaKey||!e.deltaY||drag)return;const matrix=svg.getScreenCTM();if(!matrix)return;e.preventDefault();const cursor=svg.createSVGPoint();cursor.x=e.clientX;cursor.y=e.clientY;const anchor=cursor.matrixTransform(matrix.inverse()),pixels=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?svg.getBoundingClientRect().height:1),factor=Math.exp(Math.max(-300,Math.min(300,pixels))*.0018),width=view[2]*factor,height=view[3]*factor;if(width<.05||width>80000||!Number.isFinite(width)||!Number.isFinite(height))return;followPlanFit=false;view=[anchor.x-(anchor.x-view[0])*factor,anchor.y-(anchor.y-view[1])*factor,width,height];setView()},{passive:false});
+// BEGIN PREDICTION CORE
+// Reference extrapolation in world coordinates, not an extension of future plan segments.
+function solveForecast3(matrix,rhs){const a=matrix.map((row,i)=>[...row,rhs[i]]);for(let col=0;col<3;col++){let pivot=col;for(let i=col+1;i<3;i++)if(Math.abs(a[i][col])>Math.abs(a[pivot][col]))pivot=i;if(Math.abs(a[pivot][col])<1e-10)return null;[a[col],a[pivot]]=[a[pivot],a[col]];const div=a[col][col];for(let j=col;j<4;j++)a[col][j]/=div;for(let i=0;i<3;i++)if(i!==col){const f=a[i][col];for(let j=col;j<4;j++)a[i][j]-=f*a[col][j]}}const result=a.map(row=>row[3]);return result.every(Number.isFinite)?result:null}
+function fitForecast(samples,anchor,span){const matrix=Array.from({length:3},()=>[0,0,0]),rx=[0,0,0],ry=[0,0,0];for(const p of samples){const t=(p.s-anchor.s)/span,v=[1,t,t*t];for(let i=0;i<3;i++){rx[i]+=v[i]*(p.x-anchor.x);ry[i]+=v[i]*(p.y-anchor.y);for(let j=0;j<3;j++)matrix[i][j]+=v[i]*v[j]}}const bx=solveForecast3(matrix,rx),by=solveForecast3(matrix,ry);if(!bx||!by)return null;const dx=bx[1]/span,dy=by[1]/span,ddx=2*bx[2]/(span*span),ddy=2*by[2]/(span*span),speed=Math.hypot(dx,dy);if(speed<1e-9||!Number.isFinite(speed))return null;const curvature=(dx*ddy-dy*ddx)/(speed*speed*speed),angle=Math.atan2(dy,dx);let squared=0;for(const p of samples){const t=(p.s-anchor.s)/span;const x=bx[0]+bx[1]*t+bx[2]*t*t,y=by[0]+by[1]*t+by[2]*t*t;squared+=(x-(p.x-anchor.x))**2+(y-(p.y-anchor.y))**2}return Number.isFinite(curvature)?{angle,speed,curvature,rms:Math.sqrt(squared/samples.length)*1000}:null}
+function forecastCurveInfo(m,s){let index=m.ss.findIndex(q=>s<q.s0+q.l-1e-8);if(index<0)index=m.ss.length-1;const q=m.ss[index];if(!q)return'';if(q.type!=='S')return(q.type==='L'?'左':'右')+'カーブ終了まで '+Number(Math.max(0,q.s0+q.l-s).toFixed(3))+'m';const previous=m.ss[index-1];return previous&&previous.type!=='S'&&Math.abs(s-q.s0)<1e-8?'カーブ終了点・直線区間へ':'直線区間'}
+function predictAlignment(m){
+ const mm=m.mm;if(!mm.length)return{available:false,message:'実測点を追加すると予測を確認できます。',curveInfo:''};const last=mm[mm.length-1],curveInfo=forecastCurveInfo(m,last.s),remaining=m.total-last.s;if(remaining<1e-8)return{available:false,message:'実測が計画の到達点に達しています。',curveInfo,station:last.s};
+ const recent=mm.filter(p=>last.s-p.s<=3+1e-8);if(recent.length<5||last.s-recent[0].s<2-1e-8)return{available:false,message:'予測には、直近3m内で5点以上・延長差2m以上の実測が必要です。',curveInfo,station:last.s};
+ const count=Math.min(7,recent.length),samples=Array.from({length:count},(_,i)=>recent[Math.round(i*(recent.length-1)/(count-1))]),span=last.s-samples[0].s,horizon=Math.min(2,remaining),fit=fitForecast(samples,last,span);
+ const unstable=()=>({available:false,message:'直近の傾向が安定していないため、予測の表示を控えています。',curveInfo,station:last.s});if(!fit||fit.rms>10||Math.abs(fit.curvature*fit.speed*horizon)>Math.PI/2)return unstable();
+ const rawPoint=(f,h)=>advance(last.x,last.y,f.angle,h*f.speed,f.curvature),endpoint=rawPoint(fit,horizon);
+ // A sensitivity check, not a statistical confidence interval or a precision guarantee.
+ for(let i=0;i<samples.length;i++){const f=fitForecast(samples.filter((_,j)=>j!==i),last,span);if(!f)return unstable();const p=rawPoint(f,horizon);if(!Number.isFinite(p.x)||!Number.isFinite(p.y)||Math.hypot(p.x-endpoint.x,p.y-endpoint.y)>.05)return unstable()}
+ const makePoint=h=>{const p=rawPoint(fit,h),s=last.s+h,plan=pointAt(s,m.ss);return{s,ahead:h,x:p.x,y:p.y,left:((p.x-plan.x)*-Math.sin(plan.a)+(p.y-plan.y)*Math.cos(plan.a))*1000}};
+ const points=[{s:last.s,ahead:0,x:last.x,y:last.y,left:last.left}];for(let i=1;i<=Math.ceil(horizon/.1);i++)points.push(makePoint(Math.min(horizon,i*.1)));if(!points.every(p=>[p.x,p.y,p.left].every(Number.isFinite)))return unstable();
+ return{available:true,station:last.s,curveInfo,horizon,points,at1:horizon>=1-1e-8?makePoint(1):null,at2:horizon>=2-1e-8?makePoint(2):null,count:samples.length,span,rms:fit.rms};
+}
+// END PREDICTION CORE
+
+function drawForecast(){const button=$('forecastToggle');button.setAttribute('aria-pressed',String(forecastEnabled));button.textContent=forecastEnabled?'予測 ON':'予測線';svg.querySelectorAll('[data-forecast]').forEach(n=>n.remove());const readout=$('forecastReadout');readout.hidden=!forecastEnabled;if(!forecastEnabled)return;try{const m=displayModel(),p=predictAlignment(m);if(!p.available){readout.textContent='参考予測：'+p.message+(p.curveInfo?' ／ '+p.curveInfo:'');return}const format=q=>q?(Math.abs(q.left)<.5?'ズレ約0mm':(q.left>0?'左 約':'右 約')+Math.round(Math.abs(q.left))+'mm'):'計画の範囲外';readout.innerHTML=`<strong>参考予測・最新 ${metres(p.station)}m から ／ ${esc(p.curveInfo)}</strong><span>1m先：${format(p.at1)} ／ 2m先：${format(p.at2)}${p.horizon<2?'（予測は到達点まで '+metres(p.horizon)+'m）':''}</span><small>青緑の破線＝今の向き・曲がり方を継続。地盤や修正操作の遅れは未反映。</small>`;const b=bounds(samplePlan(m)),scale=Math.min(735/Math.max(b.xmax-b.xmin,.001),250/Math.max(b.ymax-b.ymin,.001)),xy=q=>[38+(q.x-b.xmin)*scale,280-(q.y-b.ymin)*scale];svg.insertAdjacentHTML('beforeend',`<polyline data-forecast="plan" points="${p.points.map(q=>xy(q).join(',')).join(' ')}" fill="none" stroke="#0f766e" stroke-width="2.5" stroke-dasharray="7 5" vector-effect="non-scaling-stroke" pointer-events="none"/>`);svg.querySelectorAll('g[data-station]').forEach(g=>svg.append(g));if(followPlanFit)fitPlanExtent()}catch{readout.textContent='参考予測：計画と実測の入力内容を確認してください。'}}
+const actualPreview=preview;preview=function(){actualPreview();drawForecast()};
+$('forecastToggle').onclick=()=>{if(restoring||projectBusy)return;forecastEnabled=!forecastEnabled;persist();preview()};
+preview();
 })();
